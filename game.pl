@@ -19,7 +19,7 @@ use utf8;
 
 $Decline::decline_dir = cwd;
 
-my $static_path = catfile ($Decline::decline_dir,'static');
+my $static_path = catfile ($Decline::decline_dir, 'static');
 
 app->static->paths->[0] = $static_path;
 
@@ -39,7 +39,7 @@ any '/:select/:castle/dynamic.js' => sub {
    my $c = shift;
    $c->stash (select => $c->param('select'));
    
-   return $c->render (template=>'dynamic_js');
+   return $c->render (template => 'dynamic_js');
 };
 
 any '/static/:file' => sub {
@@ -77,7 +77,7 @@ any '/public/:select/:castle' => sub {
       my $castle = $c->param ('castle');
       my $hour   = $c->param ('hour');
       if ($castle eq 'new') {
-         my $castle_id = Decline::create_new_castle ($key,$hour);
+         my $castle_id = Decline::create_new_castle ($key, $hour);
          return $c->render (text => "Unable create new castle") unless $castle_id;
          return $c->redirect_to ("/public/castle/$castle_id");
       }
@@ -86,7 +86,7 @@ any '/public/:select/:castle' => sub {
       $c->stash (select   => $select);
       $c->stash (hash     => $hash);
       $c->stash (army     => $Decline::army);
-      $c->stash (aid => $c->param ('aid'));
+      $c->stash (aid      => $c->param ('aid'));
       if ($select eq 'map' && $c->param ('d')) {
 
          if (my $err = Decline::move_army ($castle, $c->param ('aid'), $c->param ('d'))) {
@@ -97,7 +97,7 @@ any '/public/:select/:castle' => sub {
       }
       if (exists $hash->{$select}){
 
-         return $c->render (template=>$select);
+         return $c->render (template => $select);
       } else {
 
          return $c->render (text => "Unknown url /$select/");
@@ -143,11 +143,11 @@ any '' => sub {
 
    my @list = Decline::list_my_castles ($key);
 
-   $c->stash (hour => $c->param ('hour'));
-   $c->stash (restrict => Decline::restrict_new_castle ($key));
-   $c->stash (key => $key);
-   $c->stash (list => \@list);
-   $c->stash (castle => undef, hash => undef, select => undef, army => {});
+   $c->stash (hour      => $c->param ('hour'));
+   $c->stash (restrict  => Decline::restrict_new_castle ($key));
+   $c->stash (key       => $key);
+   $c->stash (list      => \@list);
+   $c->stash (castle    => undef, hash => undef, select => undef, army => {});
    $c->render (template => 'content');
 };
 

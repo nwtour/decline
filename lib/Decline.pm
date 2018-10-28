@@ -29,9 +29,9 @@ our $army = {
 
 sub get_key_id {
 
-   my ($key,$file) = (undef,catfile ($decline_dir,'key','private'));
+   my ($key, $file) = (undef, catfile ($decline_dir, 'key', 'private'));
    return $key unless -f $file;
-   if (open (FILE,'<',$file)) {
+   if (open (FILE, '<', $file)) {
 
       $key = $_ while (<FILE>);
       close (FILE);
@@ -44,13 +44,13 @@ sub create_new_key {
 
    my $random = int (rand (10000));
 
-   if (open (FILE,'>',catfile ($decline_dir,'key','public'))) {
+   if (open (FILE,'>',catfile ($decline_dir, 'key', 'public'))) {
 
       print FILE $random;
       close (FILE);
    }
 
-   if (open (FILE,'>',catfile ($decline_dir,'key','private'))) {
+   if (open (FILE,'>',catfile ($decline_dir, 'key', 'private'))) {
 
       print FILE $random;
       close (FILE);
@@ -60,16 +60,16 @@ sub create_new_key {
 }
 
 sub get_utc_hour {
-   my (undef,undef,$utchour)   = gmtime(time);
+   my (undef, undef, $utchour) = gmtime(time);
 
    return $utchour;
 }
 
 sub localtimezone_offset {
-   my (undef,undef,$localhour) = localtime(time);
+   my (undef, undef, $localhour) = localtime(time);
    my $utchour = get_utc_hour ();
 
-   my $hour_offset = ( $localhour - $utchour );
+   my $hour_offset = ($localhour - $utchour);
    $hour_offset += 24 if $hour_offset < 0;
 
    return $hour_offset;
@@ -77,7 +77,7 @@ sub localtimezone_offset {
 
 sub get_utc_time {
 
-   return int (DateTime->from_epoch (epoch=>(time))->set_time_zone ("UTC")->epoch ());
+   return int (DateTime->from_epoch (epoch => time)->set_time_zone ("UTC")->epoch ());
 }
 
 sub make_sorted_data {
@@ -86,16 +86,16 @@ sub make_sorted_data {
    my @sorted_keys = sort { $a cmp $b } (keys %{$hashref});
    my $i = 0;
    my $array_ref = [];
-   while (exists $sorted_keys[ $i ]) {
+   while (exists $sorted_keys[$i]) {
 
-      my $hr = $hashref->{ $sorted_keys[ $i ] };
+      my $hr = $hashref->{ $sorted_keys[$i] };
       if (ref ($hr) eq 'HASH') {
 
          $hr = clone_data ($hr);
          $hr = make_sorted_data ($hr);
       }
 
-      my @int_array = ( $sorted_keys[ $i ] );
+      my @int_array = ($sorted_keys[$i]);
       push @int_array, $hr;
       push @{ $array_ref }, \@int_array;
       $i++;
@@ -107,7 +107,7 @@ sub get_json_and_sha1 {
    my $hashref = shift;
 
    my $json = encode_json (make_sorted_data ($hashref));
-   return ($json,sha1_hex ($json));
+   return ($json, sha1_hex ($json));
 }
 
 sub part_json {
@@ -157,8 +157,8 @@ sub entropy {
 sub write_op {
    my ($hashref, $castle_id) = @_;
 
-   my ($sub_dir,undef,$microseconds,$dt) = entropy ();
-   my $full_dir = catfile ($decline_dir,'data',$castle_id,$sub_dir);
+   my ($sub_dir, undef, $microseconds, $dt) = entropy ();
+   my $full_dir = catfile ($decline_dir, 'data', $castle_id, $sub_dir);
    mkdir $full_dir if ! -d $full_dir;
    my ($json,undef) = get_json_and_sha1 ($hashref);
    if (open (FILE,'>',catfile ($full_dir, $dt . '.' . $microseconds))) {
@@ -171,7 +171,7 @@ sub write_op {
 sub write_castle_state {
    my ($json, $castle_id) = @_;
 
-   if (open (FILE,'>',catfile ($decline_dir,'data',$castle_id,'state.json'))) {
+   if (open (FILE, '>', catfile ($decline_dir, 'data', $castle_id, 'state.json'))) {
       print FILE $json;
       close (FILE);
    }
@@ -187,16 +187,16 @@ sub create_new_coord {
 
 sub load_castle {
    my $castle_id = shift;
-   my $file_path = catfile ($decline_dir,'data',$castle_id,'state.json');
+   my $file_path = catfile ($decline_dir, 'data', $castle_id, 'state.json');
    return load_json ($file_path);
 }
 
 sub list_castles {
    my @list;
-   foreach my $dir (glob (catfile ($decline_dir,'data') . "/*")) {
+   foreach my $dir (glob (catfile ($decline_dir, 'data') . "/*")) {
 
       next if ! -d $dir;
-      next if ! -e catfile ($dir,'state.json');
+      next if ! -e catfile ($dir, 'state.json');
       if ($dir =~ /(\d+)$/) {
          push @list, load_castle ($1);
       }
@@ -229,7 +229,7 @@ sub clone_data {
    my $ref = shift;
    my $VAR1;
 
-   my $new_ref = eval(Data::Dumper::Dumper($ref));
+   my $new_ref = eval (Data::Dumper::Dumper($ref));
    return $new_ref;
 }
 
@@ -240,16 +240,16 @@ sub create_new_castle {
       return 0;
    }
 
-   my ($castle_id,$castle_dir);
+   my ($castle_id, $castle_dir);
    while (1) {
 
       $castle_id = int (rand (10000000));
-      $castle_dir = catfile ($decline_dir,'data',$castle_id);
+      $castle_dir = catfile ($decline_dir, 'data', $castle_id);
       last if ! -d $castle_dir;
    }
    mkdir $castle_dir;
    my $dt = get_utc_time ();
-   my ($x,$y,$mapid) = create_new_coord ();
+   my ($x, $y, $mapid) = create_new_coord ();
    my $stepdt = $hour - localtimezone_offset ();
    $stepdt += 24 if $stepdt < 0;
    my $data = {
@@ -266,8 +266,8 @@ sub create_new_castle {
       laststep   => $dt,
    };
    my $op_data = clone_data ($data);
-   my ($json,$sha1) = get_json_and_sha1 ($data);
-   my (undef,$old_sha1) = get_json_and_sha1 ({});
+   my ($json, $sha1) = get_json_and_sha1 ($data);
+   my (undef, $old_sha1) = get_json_and_sha1 ({});
    $op_data->{op} = "create_castle";
    $op_data->{new} = $sha1;
    $op_data->{old} = $old_sha1;
@@ -277,7 +277,7 @@ sub create_new_castle {
 }
 
 sub buy_army {
-   my ($castle_id,$army_name) = @_;
+   my ($castle_id, $army_name) = @_;
 
    my $castle_ref = load_castle ($castle_id);
    return "Invalid castle id $castle_id" unless $castle_ref->{mapid};
@@ -305,8 +305,8 @@ sub buy_army {
            bdt        => $bdt,
            health     => 100
         };
-        my (undef,$old_sha1) = get_json_and_sha1 ($castle_ref);
-        my ($json,$sha1) = get_json_and_sha1 ($clone_data);
+        my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
+        my ($json, $sha1) = get_json_and_sha1 ($clone_data);
         write_op ({op => 'buy', name => $arm, dt => $bdt, new => $sha1, old => $old_sha1}, $castle_id);
         write_castle_state ($json, $castle_id);
         return 0;
@@ -318,22 +318,11 @@ sub buy_army {
 sub coord_for_direction {
    my ($x,$y,$direction) = @_;
 
-   if ($direction =~ /s/) {
+   $y++ if $direction =~ /s/;
+   $y-- if $direction =~ /n/;
+   $x-- if $direction =~ /w/;
+   $x++ if $direction =~ /e/;
 
-      $y++;
-   }
-   if ($direction =~ /n/) {
-
-      $y--;
-   }
-   if ($direction =~ /w/) {
-
-      $x--;
-   }
-   if ($direction =~ /e/) {
-
-      $x++;
-   }
    return ($x,$y);
 }
 
@@ -353,23 +342,23 @@ sub has_move_army {
 
    my ($x, $y) = coord_for_direction ($castle_ref->{army}{$aid}{x}, $castle_ref->{army}{$aid}{y}, $direction);
 
-   my $dest = picture_by_coord ($mapid,$x,$y);
+   my $dest = picture_by_coord ($mapid, $x, $y);
    if (! ref ($dest)) {
 
       return (0,"End of Kingdom") if $dest eq 0;
       return (1);
    }
-   my (undef,$cid,$caid) = @{ $dest };
+   my (undef, $cid, $caid) = @{ $dest };
    if ($castle_id ne $cid) {
 
-      return (2,$cid,$caid);
+      return (2, $cid, $caid);
    }
    return (1) unless $caid; # To Castle
    return (0,"Busy");
 }
 
 sub has_move_army2 {
-  my ($rc) = has_move_army ( @_ );
+  my ($rc) = has_move_army (@_);
   return $rc;
 }
 
@@ -402,15 +391,17 @@ sub load_index {
 
       foreach my $aid (keys %{$castlehr->{army}}) {
 
-         $index->{$castlehr->{mapid}}{$castlehr->{army}{$aid}{x}}{$castlehr->{army}{$aid}{y}} = [$castlehr->{army}{$aid}{name},$castlehr->{id},$aid];
+         $index->{$castlehr->{mapid}}{$castlehr->{army}{$aid}{x}}{$castlehr->{army}{$aid}{y}}
+            = [$castlehr->{army}{$aid}{name}, $castlehr->{id}, $aid];
       }
 
-      $index->{$castlehr->{mapid}}{$castlehr->{x}}{$castlehr->{y}} = ["tower1",$castlehr->{id}];
+      $index->{$castlehr->{mapid}}{$castlehr->{x}}{$castlehr->{y}}
+         = ["tower1", $castlehr->{id}];
    }
 }
 
 sub picture_by_coord {
-   my ($mapid,$x, $y) = @_;
+   my ($mapid, $x, $y) = @_;
 
    if (! exists $index->{$mapid}) {
 
@@ -431,7 +422,7 @@ sub picture_by_coord {
 
 sub get_network_index {
    my $network = {};
-   if (open (FILE,'<',catfile ($decline_dir,'index','network.json'))) {
+   if (open (FILE, '<', catfile ($decline_dir, 'index', 'network.json'))) {
 
       my $data = '';
       $data .= $_ while (<FILE>);
@@ -444,7 +435,7 @@ sub get_network_index {
 sub write_network_index {
    my $network = shift;
 
-   if (open (FILE,'>',catfile ($decline_dir,'index','network.json'))) {
+   if (open (FILE,'>',catfile ($decline_dir, 'index', 'network.json'))) {
 
       print FILE encode_json ($network);
       close (FILE);
@@ -477,9 +468,17 @@ sub increase_population {
    $clone_data->{gold} += $gold;
    $clone_data->{population} += $population;
 
-   my (undef,$old_sha1) = get_json_and_sha1 ($castle_ref);
-   my ($json,$sha1) = get_json_and_sha1 ($clone_data);
-   write_op ({op => 'increase_population', gold_increase => $gold, population_increase => $population, dt => $dt, new => $sha1, old => $old_sha1}, $castle_ref->{id});
+   my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
+   my ($json, $sha1) = get_json_and_sha1 ($clone_data);
+   my $op = {
+      op                  => 'increase_population',
+      gold_increase       => $gold,
+      population_increase => $population,
+      dt                  => $dt,
+      new                 => $sha1,
+      old                 => $old_sha1
+   };
+   write_op ($op, $castle_ref->{id});
    write_castle_state ($json, $castle_ref->{id});
 }
 
@@ -529,8 +528,8 @@ sub local_update_castle {
 
       while ($basedt < $dt) {
 
-         my $datetime = DateTime->from_epoch (epoch=>$basedt)->set_time_zone ("UTC");
-         if ($datetime->second() != 0 ){
+         my $datetime = DateTime->from_epoch (epoch => $basedt)->set_time_zone ("UTC");
+         if ($datetime->second() != 0) {
 
             $basedt++;
             next;
@@ -539,11 +538,11 @@ sub local_update_castle {
 
             if ($datetime->hour_1() == $castlehr->{stepdt}) {
 
-               increase_movement ($castlehr,$basedt);
+               increase_movement ($castlehr, $basedt);
             }
             if (! ($datetime->hour_1() % 3)) {
 
-               increase_population ($castlehr,$basedt);
+               increase_population ($castlehr, $basedt);
             }
             $basedt += (60*60);
          }
@@ -593,7 +592,7 @@ sub random_color {
    my $color = '#';
    foreach (1 .. 3) {
 
-      $color .= $list[ int (rand (6)) ];
+      $color .= $list[int (rand (6))];
    }
 
    return $color;
