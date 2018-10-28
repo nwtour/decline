@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ru"><head>
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<link rel="stylesheet" href="/static/style.css" type="text/css">
+<script  src="/static/script.js" type="text/javascript"></script>
+% if ($castle) {
+   <script src="/<%= $select %>/<%= $castle->{id} %>/dynamic.js" type="text/javascript"></script>
+% }
+<script>
+function loadPage() {
+% if ($castle) {
+   dynamic_onload ();
+% }
+   static_onload ();
+}
+</script>
+<title>DECLINE</title>
+</head>
+<body onload="loadPage()">
+   <div class="nav">
+      <a href="/">
+         <img src="/static/logo.jpg" alt="" border="0" id="logo">
+      </a><br>
+      <a href="/">Выбор замка</a><br>
+%==   ($select ne 'kingdom' ? '<a href="/public/kingdom">' : '' )
+         Глобальная карта<br>
+%==   ($select ne 'kingdom' ? '</a>' : '' )
+      <a href="/public/setting">Настройки игрока</a><br>
+      <a href="/public/rating">Рейтинги</a><br>
+      <a href="/public/sync">Синхронизация</a><br>
+      <br>
+% if ($castle) {
+%    foreach my $s (sort {$hash->{$a}{id} <=> $hash->{$b}{id}} keys %{ $hash }) {
+%==     join ('', '<a href="/public/', $s, '/', $castle->{id}, '">' ) if $s ne $select
+        <%= $hash->{$s}{ru} %>
+%==     '</a>' if $s ne $select
+        <br>
+%    }
+% }
+      <br><br>
+      <div id="updates">Обмен данными: поиск</div><br>
+      <div id="updates_proccess"></div>
+   </div>
+   <div class="content" id="div_content">
+%= content header => begin
+   Default content (header)
+% end
+%= content base => begin
+   Default content (base)
+% end
+%= content footer => begin
+   Default content (footer)
+% end
+   </div>
+</body></html>

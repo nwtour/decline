@@ -1,0 +1,106 @@
+% my $object_x = $castle->{x};
+% my $object_y = $castle->{y};
+% if ($aid) {
+
+%    $object_x = $castle->{army}{$aid}{x};
+%    $object_y = $castle->{army}{$aid}{y};
+% }
+
+% use Decline;
+
+% extends 'template';
+% content header => begin
+%  foreach my $y ( 1 .. 11 ) {
+%     my $real_y = ($object_y - 6) + $y;
+%     foreach my $x ( 1 .. 11 ) {
+%        my $real_x = ($object_x - 6) + $x;
+
+%        my $res = Decline::picture_by_coord ($castle->{mapid},$real_x,$real_y);
+%        my ($m,$link);
+%        ($res,$m,$link) = @{$res} if ref ($res) eq 'ARRAY';
+         <div id="d_alt_<%= $x %>_<%= $y %>" style="position: absolute; top: 0px; left: 0px;">
+%==         ($m && $link && $m eq $castle->{id} ? '<a href="/public/map/' . $m . '/?aid=' . $link . '">' : '' )
+               <img src="/static/<%= $res %>.png" border="0" id="i_alt_<%= $x %>_<%= $y %>">
+%==         ($m && $link && $m eq $castle->{id} ? '</a>' : '')
+         </div>
+%     }
+%  }
+% end
+
+% content base => begin
+   <div class="header">
+      <h1>Карта мира <%= $object_x %>x<%= $object_y %></h1>
+   </div>
+% end
+
+% content footer => begin
+
+<div class="right" id="right" align="right">
+   <table width="60%" border="0" bgcolor="#ffff99">
+%     if ($aid) {
+         <tr>
+            <td bgcolor="#dddd00"><b>Движение</b></td><td bgcolor="#dddd00" colspan="2"><b>Инфо</b></td>
+         </tr>
+         <tr>
+            <td>
+%              foreach my $mov ( "nw", "n", "ne", "w", "e", "sw", "s", "se" ) {
+%                 if (Decline::has_move_army2 ($castle->{id}, $aid, $mov)) {
+                     <a href="/public/map/<%= $castle->{id} %>/?aid=<%= $aid %>&d=<%= $mov %>">
+                        <img border="0" src="/static/move_<%= $mov %>.png">
+                     </a>
+%                 } else {
+                     <img border="0" src="/static/move_null.png">
+%                 }
+%                 if ($mov =~ /e$/) {
+                     <br>
+%                 }
+%              }
+            </td>
+            <td style="text-align: left;">
+               Атака: <br>
+               Защита: <br>
+               Здоровье: <br>
+               Уровень: <br>
+               Опыт: <br>
+               Ходов: <br>
+            </td>
+%           my $name = $castle->{army}{$aid}{name};
+%           my $level = $castle->{army}{$aid}{level};
+            <td style="text-align: right;">
+               <%= $Decline::army->{$name}{$level}{attack} %><br>
+               <%= $Decline::army->{$name}{$level}{defense} %><br>
+               <%= $castle->{army}{$aid}{health} %>%<br>
+               <%= $level %><br>
+               <%= $castle->{army}{$aid}{expirience} %><br>
+               <%= $castle->{army}{$aid}{movement} %><br>
+            </td>
+         </tr>
+%     }
+%     my @sorted_army = sort keys %{$castle->{army}};
+%     if (scalar (@sorted_army)) {
+         <tr>
+            <td bgcolor="#dddd00" colspan="3"><b>Выбор войска</b></td>
+         </tr>
+         <tr><td colspan="3">
+            <table border="0"><tr>
+%           my $i = 0;
+%           foreach my $a_id (@sorted_army) {
+
+%==            ( $aid && $a_id eq $aid ? '<td bgcolor="#dddd00" colspan="2">' : '<td colspan="2">' )
+               <a href="/public/map/<%= $castle->{id} %>/?aid=<%= $a_id %>">
+               <img src="/static/<%= $castle->{army}{$a_id}{name} %>.png" class="resize_img_4percent">
+               <%= $castle->{army}{$a_id}{movement} %>
+               </a>
+               </td>
+%              $i++;
+%              if ($i == 5) {
+                  </tr><tr>
+%                 $i = 0;
+%              }
+%           }
+         </tr></table>
+         </td></tr>
+%     }
+   </table>
+</div>
+% end

@@ -1,0 +1,17 @@
+% extends 'castle_owner';
+% content header => begin
+   <div class="header">
+      <h1>Замок: без названия x<%= $castle->{x} %> y<%= $castle->{y} %></h1>
+   </div>
+% end
+% content base => begin
+   <div class="base" id="base">
+   <center>
+   <table width="90%" border="0" bgcolor="#ffff99" align="center">
+      <tr>
+         <td bgcolor="#dddd00"></td>
+      </tr>
+   </table>
+   </center>
+   </div>
+% end

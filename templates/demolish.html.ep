@@ -1,0 +1,5 @@
+% extends 'template';
+% content header => begin
+   <%= $key %><br>
+   Демобилизация<br>
+% end

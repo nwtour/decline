@@ -1,0 +1,16 @@
+function dynamic_onload () {
+
+%  if ($select && $select eq 'map') {
+%     foreach my $y ( 1 .. 11 ) {
+%        foreach my $x ( 1 .. 11 ) {
+%           my $xy = "_alt_" . $x . "_" . $y;
+%           my $x3 = $x * 3;
+%           my $y3 = $y * 3;
+            if (document.getElementById("i<%= $xy %>")) {
+               document.getElementById("i<%= $xy %>").setAttribute("style","width:" + (one_percent() * 3) + "px; height:" + (one_percent() * 3) + "px");
+               document.getElementById("d<%= $xy %>").setAttribute("style","position: absolute;top: " + (<%= $y3 %> * one_percent()) + "px; left: " + (<%= $x3 %> * one_percent()) + "px");
+            }
+%        }
+%     }
+%  }
+}

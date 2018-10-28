@@ -1,0 +1,64 @@
+% extends 'template';
+% content footer => begin
+<div class="right" id="right" align="right">
+   <table width="60%" border="0" bgcolor="#ffff99">
+      <tr>
+         <td bgcolor="#dddd00" colspan="2"><b>Ваш замок</b></td>
+      </tr>
+      <tr>
+         <td style="text-align: right;" width="50%">Владелец :</td><td style="text-align: left;" width="50%"><b><%= $key %></b></td>
+      </tr>
+      <tr>
+% use Decline;
+% my $days = int ((Decline::get_utc_time () - $castle->{dt}) / (60*60*24));
+         <td style="text-align: right;">Возраст замка :</td><td style="text-align: left;"><b><%= $days %> дней</b></td>
+      </tr>
+      <tr>
+         <td style="text-align: right;">Убито :</td><td style="text-align: left;"><b>0</b></td>
+      </tr>
+      <tr>
+         <td bgcolor="#dddd00" colspan="2"><b>На сегодняшний день у Вас в замке</b></td>
+      </tr>
+      <tr>
+         <td style="text-align: right;">Золота</td><td style="text-align: right;"><%= $castle->{gold} %></td>
+      </tr>
+      <tr>
+         <td style="text-align: right;">Население (людей)</td><td style="text-align: right;"><%= $castle->{population} %></td>
+      </tr>
+      <tr>
+         <td bgcolor="#dddd00" colspan="2"><b>Баланс за последние три часа</b></td>
+      </tr>
+      <tr>
+         <td style="text-align: right;">От населения</td><td style="text-align: right;"><font color="#007700"><%= $castle->{gold_increase} %></font></td>
+      </tr>
+      <tr>
+         <td bgcolor="#dddd00" colspan="2"><b>Войска в замке</b></td>
+      </tr>
+      <tr>
+         <td style="text-align: right;">Количество </td><td style="text-align: right;"><%= scalar (keys %{$castle->{army}}) %></td>
+      </tr>
+%     my $i = 0;
+%     foreach my $aid (sort keys %{$castle->{army}}) {
+         
+%==      ( $i == 0 ? '<tr><td>' : '<td>' )
+         <table width="100%" border="0">
+            <tr>
+               <td>
+                  <img src="/static/<%= $castle->{army}{$aid}{name} %>.png" class="resize_img_4percent">
+               </td>
+               <td>
+                  Здоровье: <%= $castle->{army}{$aid}{health} %>%<br>
+                  Опыт: <%= $castle->{army}{$aid}{expirience} %><br>
+                  Ходы: <%= $castle->{army}{$aid}{movement} %><br>
+%                 my $level = $castle->{army}{$aid}{level};
+                  Атака: <%= $army->{$castle->{army}{$aid}{name}}{$level}{attack} %><br>
+                  Защита: <%= $army->{$castle->{army}{$aid}{name}}{$level}{defense} %><br>
+               </td>
+            </tr>
+         </table>
+%==      ( $i == 1 ? '</td></tr>' : '</td>' )
+%        $i = ( $i ? 0 : 1 )
+%     }
+   </table>
+</div>
+% end

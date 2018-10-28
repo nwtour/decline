@@ -1,0 +1,3 @@
+% extends 'template';
+% content header => begin
+% end

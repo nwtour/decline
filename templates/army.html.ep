@@ -1,0 +1,46 @@
+% extends 'castle_owner';
+% content header => begin
+   <div class="header">
+      <h1>Замок: без названия x<%= $castle->{x} %> y<%= $castle->{y} %></h1>
+   </div>
+% end
+% content base => begin
+   <div class="base" id="base">
+   <center>
+   <table width="90%" border="0" bgcolor="#ffff99" align="center">
+      <tr>
+         <td bgcolor="#dddd00">Покупка войска</td>
+      </tr>
+      <tr>
+         <td>На каждого купленного юнита помимо золота потратится по 10 единиц населения Вашего замка!</td>
+      </tr>
+      <tr>
+         <td>
+            <table width="100%" border="1">
+               <tr><td>Войско</td><td>Параметры</td><td>Финансы</td><td>Купить!</td></tr>
+%  foreach my $army_key ( sort { $army->{$a}{1}{cost} <=> $army->{$b}{1}{cost} } keys %{$army} ) {
+               <tr>
+                  <td>
+                     <img src="/static/<%= $army_key %>.png" border="0" class="resize_img_4percent"><br>
+                     <%= $army->{$army_key}{ru} %>
+                  </td>
+                  <td>
+                     атака: <%= $army->{$army_key}{1}{attack} %><br>
+                     защита: <%= $army->{$army_key}{1}{defense} %><br>
+                     ходы: <%= $army->{$army_key}{1}{movement} %>
+                  </td>
+                  <td>
+                     цена: <%= $army->{$army_key}{1}{cost} %><br>
+                     содержание: <%= $army->{$army_key}{1}{tarif} %>
+                  </td>
+                  <td>
+                     <a href="/buy/<%= $army_key %>/<%= $castle->{id} %>">Купить!</a>
+               </tr>
+%  }
+            </table>
+         </td>
+      </tr>
+   </table>
+   </center>
+   </div>
+% end

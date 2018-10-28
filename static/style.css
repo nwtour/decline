@@ -1,0 +1,90 @@
+BODY
+{
+	margin: 0px;
+	background-color: #dfdfb0;
+	font-family: Tahoma, Geneva, sans-serif;
+	font-size: 12px;
+	font-color: #000000;
+	text-decoration:none;
+}
+TD {
+    text-align: center;
+}
+a, a:active
+{
+	color: #505000;
+	font-weight: normal;
+	font-size: 13px;
+	text-decoration : none;
+}
+a:hover
+{
+	font-weight:bold;
+	color: #000000;
+	font-size:13px;
+	text-decoration:none;
+}
+H1
+{
+	font-size: 18px;
+}
+H2
+{
+	font-size: 16px;
+	color: #ff0000;
+}
+.info {
+	position: absolute;
+	left: 0px;
+	bottom: 0;
+	height: 79px;
+	width: 488px;
+ 	background: #ffff99;
+}
+.nav
+{
+	position: absolute;
+	left: 0px;
+	width: 10%;
+	top: 0px;
+	height: 100%;
+	text-align: center;
+	background: #dddd00;
+}
+.content
+{
+	position: absolute;
+	left: 10%;
+	width: 90%;
+	text-align: center;
+	visibility: hidden;
+}
+.right
+{
+	position: absolute;
+	right: 3%;
+	top: 0px;
+	width: 42%;
+}
+.base
+{
+	position: absolute;
+	left: 0px;
+	width: 55%;
+	text-align: center;
+        top: 0px;
+}
+.header
+{
+	position: absolute;
+	left: 0px;
+	top: 0px;
+	width: 100%;
+	text-align: center;
+}
+
+.wimg
+{
+	max-width: 100%;
+	height: auto;
+}
