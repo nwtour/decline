@@ -1,0 +1,11 @@
+% extends 'template';
+% content header => begin
+
+% if (scalar (keys %{$files})) {
+     Доступны новые файлы для обновления<br>
+%    foreach my $file (keys %{$files}) {
+
+        <%= $file %><br>
+%    }
+% }
+% end
