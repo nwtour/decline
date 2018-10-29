@@ -25,7 +25,9 @@ function loadPage() {
 %==   ($select ne 'kingdom' ? '<a href="/public/kingdom">' : '' )
          Глобальная карта<br>
 %==   ($select ne 'kingdom' ? '</a>' : '' )
-      <a href="/public/setting">Настройки игрока</a><br>
+%==   ($select ne 'settings' ? '<a href="/public/setting">' : '' )
+         Настройки игрока<br>
+%==   ($select ne 'settings' ? '</a>' : '' )
       <a href="/public/rating">Рейтинги</a><br>
       <a href="/public/sync">Синхронизация</a><br>
       <br>

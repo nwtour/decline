@@ -10,6 +10,10 @@ use Mojo::UserAgent;
 use Time::HiRes qw(gettimeofday);
 use Digest::SHA  qw(sha1_hex);
 use SVG;
+use LWP::Simple qw(mirror);
+use LWP::Protocol::https;
+use Archive::Zip;
+use File::stat;
 
 our $decline_dir;
 our $version = 1;
@@ -647,6 +651,38 @@ sub generate_svg {
       $svg->text (id => "t$cid", x => (($x*$multi) + $multi), y  => ($y*$multi), style => {'font' => 'Tahoma, Geneva, sans-serif', 'font-size' => 7})->cdata("${x}x${y}");
    }
    return $svg;
+}
+
+sub update_program_files {
+   my ($full, $force) = @_;
+
+   mkdir (catfile ($decline_dir, 'update'));
+
+   mirror ('https://github.com/nwtour/decline/archive/master.zip', "update/master.zip");
+
+   my $result = {};
+   return $result unless -f catfile ($decline_dir, 'update', 'master.zip');
+
+   my $somezip = Archive::Zip->new;
+   $somezip->read (catfile ($decline_dir, 'update', 'master.zip'));
+
+   foreach my $file ($somezip->members) {
+
+      next unless $file->uncompressedSize;
+
+      my @local_file = split (/\//, $file->fileName);
+      shift (@local_file);
+
+      if (stat (catfile (@local_file))->size ne $file->uncompressedSize) {
+
+         $result->{ catfile (@local_file) } = 1;
+      }
+      elsif ($full) {
+
+         $result->{ catfile (@local_file) } = 0;
+      }
+   }
+   return $result;
 }
 
 1;

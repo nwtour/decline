@@ -131,6 +131,13 @@ any '/svg/kingdom/#name' => sub {
    $c->render (text => 'Unautorized');
 };
 
+any '/public/setting' => sub {
+   my $c   = shift;
+
+   $c->stash (files => Decline::update_program_files ());
+   $c->stash (castle => undef, hash => undef, select => 'settings');
+   $c->render (template => 'settings');
+};
 
 any '' => sub {
    my $c   = shift;
