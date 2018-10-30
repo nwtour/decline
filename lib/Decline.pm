@@ -10,6 +10,7 @@ use Mojo::UserAgent;
 use Time::HiRes qw(gettimeofday);
 use Digest::SHA  qw(sha1_hex);
 use SVG;
+use GPG;
 use LWP::Simple qw(mirror);
 use LWP::Protocol::https;
 use Archive::Zip;
@@ -31,36 +32,90 @@ our $army = {
    },
 };
 
-sub get_key_id {
+sub set_gpg_path {
+   my $path = shift;
 
-   my ($key, $file) = (undef, catfile ($decline_dir, 'key', 'private'));
-   return $key unless -f $file;
-   if (open (FILE, '<', $file)) {
+   if (open (FILE, '>', catfile ($decline_dir, 'key', 'gpg_path.txt'))) {
 
-      $key = $_ while (<FILE>);
+      print FILE $path;
       close (FILE);
    }
-   return $key;
+}
+
+sub get_gpg_path {
+
+   my $path;
+   if (open (FILE, '<', catfile ($decline_dir, 'key', 'gpg_path.txt'))) {
+
+      $path = $_ while (<FILE>);
+      close (FILE);
+      return $path;
+   }
+
+   foreach my $file ('C:\Program Files\GNU\GnuPG\gpg.exe', '/usr/bin/gpg' ) {
+
+      next if ! -e $file;
+      set_gpg_path ($file);
+      return $file;
+   }
+   return undef;
+}
+
+sub gen_gpg_batch_file {
+
+   my $batch_file = catfile ($decline_dir, 'key', 'gpg.batch.txt');
+
+   if (open (FILE, '>', $batch_file)) {
+
+      print FILE "%echo Generating a basic OpenPGP key\n";
+      print FILE "Key-Type: RSA\n";
+      print FILE "Name-Real: Test\n";
+      print FILE "Name-Comment: Test\n";
+      print FILE "Name-Email: joe\@foo.bar\n";
+      print FILE "Expire-Date: 0\n";
+      print FILE "%commit\n";
+      print FILE "%echo done\n";
+      close (FILE);
+   }
+   return $batch_file;
+}
+
+sub get_key_id {
+
+   my $gpg = new GPG(debug => 0, homedir => catfile ($decline_dir, 'key'), gnupg_path => get_gpg_path ());
+
+   my $keys = $gpg->list_sig();
+
+   foreach my $k (@{$keys}) {
+
+      return $k->{key_id} if exists $k->{sig} && $k->{key_id};
+   }
+
+   return undef;
 }
 
 #TODO
 sub create_new_key {
+   my $gpg_path = shift;
 
-   my $random = int (rand (10000));
+   my $homedir = catfile ($decline_dir, 'key');
+   mkdir $homedir;
 
-   if (open (FILE,'>',catfile ($decline_dir, 'key', 'public'))) {
+   system ( $gpg_path,
+            '--homedir',
+            $homedir,
+            '--gen-key',
+            '--batch',
+            gen_gpg_batch_file ());
 
-      print FILE $random;
-      close (FILE);
+   if (get_key_id ()) {
+
+      if (open (FILE, '>', catfile ($decline_dir, 'key', 'gpg_path.txt'))) {
+
+         print FILE $gpg_path;
+         close (FILE);
+      }
    }
-
-   if (open (FILE,'>',catfile ($decline_dir, 'key', 'private'))) {
-
-      print FILE $random;
-      close (FILE);
-   }
-
-   return $random;
 }
 
 sub get_utc_hour {
@@ -658,13 +713,20 @@ sub update_program_files {
 
    mkdir (catfile ($decline_dir, 'update'));
 
-   mirror ('https://github.com/nwtour/decline/archive/master.zip', "update/master.zip");
+   my $archive_file = catfile ($decline_dir, "update", "master.zip");
+
+   my $stat = stat ($archive_file);
+
+   if (! defined ($stat) || $stat->mtime < (time - (60*60))) {
+
+      mirror ('https://github.com/nwtour/decline/archive/master.zip', $archive_file);
+   }
 
    my $result = {};
-   return $result unless -f catfile ($decline_dir, 'update', 'master.zip');
+   return $result unless -f $archive_file;
 
    my $somezip = Archive::Zip->new;
-   $somezip->read (catfile ($decline_dir, 'update', 'master.zip'));
+   $somezip->read ($archive_file);
 
    foreach my $file ($somezip->members) {
 
@@ -673,7 +735,13 @@ sub update_program_files {
       my @local_file = split (/\//, $file->fileName);
       shift (@local_file);
 
-      if (stat (catfile (@local_file))->size ne $file->uncompressedSize) {
+      my $stat = stat (catfile (@local_file));
+
+      if (! defined ($stat)) {
+
+         $result->{ catfile (@local_file) } = 1;
+      }
+      elsif (stat (catfile (@local_file))->size ne $file->uncompressedSize) {
 
          $result->{ catfile (@local_file) } = 1;
       }

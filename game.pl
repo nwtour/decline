@@ -24,15 +24,20 @@ my $static_path = catfile ($Decline::decline_dir, 'static');
 app->static->paths->[0] = $static_path;
 
 my $hash = {
-      'castle'    => {id => 1, ru => "В замок"},
-      'map'       => {id => 2, ru => "Карта мира"},
-      'army'      => {id => 3, ru => "Наём войска"},
-      'demolish'  => {id => 4, ru => "Демобилизация"},
-      'diplomacy' => {id => 5, ru => "Мирные соглашения"},
-      'clan'      => {id => 6, ru => "Клан"},
-      'setting'   => {id => 7, ru => "Настройки замка"},
-      'tax'       => {id => 8, ru => "Оброк"},
-      'messages'  => {id => 9, ru => "Сообщения"},
+      'castle'        => {id => 1, in_castle => 1, ru => "В замок"},
+      'map'           => {id => 2, in_castle => 1, ru => "Карта мира"},
+      'army'          => {id => 3, in_castle => 1, ru => "Наём войска"},
+      'demolish'      => {id => 4, in_castle => 1, ru => "Демобилизация"},
+      'diplomacy'     => {id => 5, in_castle => 1, ru => "Мирные соглашения"},
+      'clan'          => {id => 6, in_castle => 1, ru => "Клан"},
+      'setting'       => {id => 7, in_castle => 1, ru => "Настройки замка"},
+      'tax'           => {id => 8, in_castle => 1, ru => "Оброк"},
+      'messages'      => {id => 9, in_castle => 1, ru => "Сообщения"},
+      'select_castle' => {id => 1, in_castle => 0, ru => "Выбор замка"},
+      'kingdom'       => {id => 2, in_castle => 0, ru => "Глобальная карта"},
+      'settings'      => {id => 3, in_castle => 0, ru => "Настройки игрока"},
+      'rating'        => {id => 4, in_castle => 0, ru => "Рейтинги"},
+      'sync'          => {id => 5, in_castle => 0, ru => "Синхронизация"},
 };
 
 any '/:select/:castle/dynamic.js' => sub {
@@ -95,7 +100,7 @@ any '/public/:select/:castle' => sub {
          }
          return $c->redirect_to ("/public/map/$castle/?aid=" . $c->param('aid'));
       }
-      if (exists $hash->{$select}){
+      if (exists $hash->{$select} && $hash->{$select}{in_castle}){
 
          return $c->render (template => $select);
       } else {
@@ -114,12 +119,6 @@ any '/public/update' => sub {
    $c->render (text => '');
 };
 
-any '/public/kingdom' => sub {
-   my $c   = shift;
-   $c->stash (castle => undef, hash => undef, select => 'kingdom');
-   $c->render (template => 'kingdom');
-};
-
 any '/svg/kingdom/#name' => sub {
    my $c   = shift;
 
@@ -131,31 +130,65 @@ any '/svg/kingdom/#name' => sub {
    $c->render (text => 'Unautorized');
 };
 
-any '/public/setting' => sub {
-   my $c   = shift;
+any '/global/:select' => sub {
+   my $c = shift;
+   my $select = $c->param('select');
+   my $key = Decline::get_key_id ();
+   my $params = {};
+   if (! $key && $select ne 'sync') {
 
-   $c->stash (files => Decline::update_program_files ());
-   $c->stash (castle => undef, hash => undef, select => 'settings');
-   $c->render (template => 'settings');
+      return $c->render (text => "Unautorized");
+   }
+   if (! $key) {
+
+      if ($c->param('gpg_path') && -e $c->param('gpg_path')) {
+         $params->{gpg_path} = $c->param('gpg_path');
+      }
+      else {
+         $params->{gpg_path} = Decline::get_gpg_path ();
+      }
+
+      if ($c->param('yes')) {
+
+         Decline::create_new_key ($params->{gpg_path});
+         $key = Decline::get_key_id ();
+         Decline::set_gpg_path ($params->{gpg_path}) if $key;
+      }
+      else {
+
+         $params->{yes} = $c->param('yes');
+      }
+   }
+
+   if ($select eq 'select_castle') {
+
+      $params->{hour}     = $c->param ('hour');
+      $params->{restrict} = Decline::restrict_new_castle ($key);
+      $params->{list}     = [ Decline::list_my_castles ($key) ];
+   }
+   elsif ($select eq 'settings') {
+
+      $params->{files} = Decline::update_program_files ();
+   }
+
+   $c->stash (hash => $hash, castle => undef, select => $select, key => $key, params => $params);
+
+   if (exists $hash->{$select} && ! $hash->{$select}{in_castle}) {
+
+      return $c->render (template => $select);
+   }
+   $c->render (text => "Unknown url /$select/");
 };
 
 any '' => sub {
    my $c   = shift;
 
    my $key = Decline::get_key_id ();
-
    unless ($key) {
-      $key = Decline::create_new_key ();
+
+      return $c->redirect_to ("/global/sync");
    }
-
-   my @list = Decline::list_my_castles ($key);
-
-   $c->stash (hour      => $c->param ('hour'));
-   $c->stash (restrict  => Decline::restrict_new_castle ($key));
-   $c->stash (key       => $key);
-   $c->stash (list      => \@list);
-   $c->stash (castle    => undef, hash => undef, select => undef, army => {});
-   $c->render (template => 'content');
+   return $c->redirect_to ("/global/select_castle");
 };
 
 app->start ('daemon', '-l', 'http://*:3000');

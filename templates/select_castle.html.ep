@@ -4,27 +4,27 @@
    <table border="0" width="50%" bgcolor="#ffff99">
       <tr bgcolor="#dddd00"><td colspan="2">Создать замок</td></tr>
       <tr><td colspan="2">
-%        if ($hour) {
+%        if ($params->{hour}) {
             <br>
-            <a href="/public/castle/new?hour=<%= $hour %>">Создать замок (время перехода <%= $hour %>:00)</a><br>
+            <a href="/public/castle/new?hour=<%= $params->{hour} %>">Создать замок (время перехода <%= $params->{hour} %>:00)</a><br>
             <br>
-%        } elsif($restrict) {
+%        } elsif($params->{restrict}) {
             <br>
-            Создать новый замок можно через <%= int($restrict / 60) %> минут<br>
+            Создать новый замок можно через <%= int($params->{restrict} / 60) %> минут<br>
             <br>
 %        } else {
             Выберите время перехода хода<br>
 %           foreach my $h ( 1 .. 12 ) {
-               <a href="/?hour=<%= <%= sprintf ("%02d", $h) %>"><%= sprintf ("%02d", $h) %>:00</a> 
+               <a href="/global/select_castle?hour=<%= <%= sprintf ("%02d", $h) %>"><%= sprintf ("%02d", $h) %>:00</a> 
 %           }
             <br>
 %           foreach my $h ( 13 .. 24 ) {
-               <a href="/?hour=<%= <%= sprintf ("%02d", $h) %>"><%= sprintf ("%02d", $h) %>:00</a> 
+               <a href="/global/select_castle?hour=<%= <%= sprintf ("%02d", $h) %>"><%= sprintf ("%02d", $h) %>:00</a> 
 %           }
 %        }
       </td></tr>
       <tr bgcolor="#dddd00"><td colspan="2">Выберите замок</td></tr>
-% foreach my $castle ( @{ $list } ) {
+% foreach my $castle ( @{ $params->{list} } ) {
       <tr><td>
          <a href="/public/castle/<%= $castle->{id} %>">
          <img src="/static/tower1.png" border="0" class="resize_img_4percent">

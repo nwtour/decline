@@ -21,24 +21,18 @@ function loadPage() {
       <a href="/">
          <img src="/static/logo.jpg" alt="" border="0" id="logo">
       </a><br>
-      <a href="/">Выбор замка</a><br>
-%==   ($select ne 'kingdom' ? '<a href="/public/kingdom">' : '' )
-         Глобальная карта<br>
-%==   ($select ne 'kingdom' ? '</a>' : '' )
-%==   ($select ne 'settings' ? '<a href="/public/setting">' : '' )
-         Настройки игрока<br>
-%==   ($select ne 'settings' ? '</a>' : '' )
-      <a href="/public/rating">Рейтинги</a><br>
-      <a href="/public/sync">Синхронизация</a><br>
-      <br>
-% if ($castle) {
-%    foreach my $s (sort {$hash->{$a}{id} <=> $hash->{$b}{id}} keys %{ $hash }) {
-%==     join ('', '<a href="/public/', $s, '/', $castle->{id}, '">' ) if $s ne $select
-        <%= $hash->{$s}{ru} %>
-%==     '</a>' if $s ne $select
-        <br>
-%    }
-% }
+%     foreach my $s (sort {$hash->{$a}{in_castle} <=> $hash->{$b}{in_castle} || $hash->{$a}{id} <=> $hash->{$b}{id}} keys %{ $hash }) {
+
+%        if (defined $castle && $hash->{$s}{in_castle} && $s ne $select) {
+            <a href="/public/<%= $s %>/<%= $castle->{id} %>"><%= $hash->{$s}{ru} %></a><br>
+%        }
+%        elsif (!$hash->{$s}{in_castle} && $s ne $select) {
+            <a href="/global/<%= $s %>"><%= $hash->{$s}{ru} %></a><br>
+%        }
+%        elsif ($s eq $select) {
+%==         $hash->{$s}{ru} . '<br>' if defined ($castle) || ! $hash->{$s}{in_castle}
+%        }
+%     }
       <br><br>
       <div id="updates">Обмен данными: поиск</div><br>
       <div id="updates_proccess"></div>

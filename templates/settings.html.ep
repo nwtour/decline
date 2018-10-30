@@ -1,9 +1,9 @@
 % extends 'template';
 % content header => begin
 
-% if (scalar (keys %{$files})) {
-     Доступны новые файлы для обновления<br>
-%    foreach my $file (keys %{$files}) {
+% if (scalar (keys %{$params->{files}})) {
+     <h1>Доступны новые файлы для обновления</h1><br>
+%    foreach my $file (keys %{$params->{files}}) {
 
         <%= $file %><br>
 %    }

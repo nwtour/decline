@@ -1,0 +1,18 @@
+% extends 'template';
+% content header => begin
+
+% unless ($key) {
+
+     Создание ключа<br>
+%    if ($params->{gpg_path}) {
+        <a href="/global/sync/?gpg_path=<%= $params->{gpg_path} %>&yes=1">СОЗДАТЬ</a><br>
+%    }
+%    else {
+        <form method="GET" action="/global/sync/">
+        <input type="text" name="gpg_path"><br>
+        <input type="submit" value="Отправить">
+        </form>
+%    }
+% }
+
+% end
