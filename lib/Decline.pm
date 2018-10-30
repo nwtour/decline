@@ -15,6 +15,7 @@ use LWP::Simple qw(mirror);
 use LWP::Protocol::https;
 use Archive::Zip;
 use File::stat;
+use LockFile::Simple;
 
 our $decline_dir;
 our $version = 1;
@@ -31,6 +32,22 @@ our $army = {
       1  => { attack => 1, defense => 2, movement => 3, cost => 10, tarif => 0.8 }
    },
 };
+
+sub lock_data {
+   my $lockmgr = LockFile::Simple->make (-format => '/home/nwtour/decgit/data/%f.lck', -max => 1, -delay => 1, -stale => 1);
+
+   foreach (1 .. 3) {
+
+      return $lockmgr if $lockmgr->lock ("file");
+   }
+   return undef;
+}
+
+sub unlock_data {
+   my $lockmgr = shift;
+
+   $lockmgr->unlock("file") if $lockmgr;
+}
 
 sub set_gpg_path {
    my $path = shift;
@@ -220,7 +237,7 @@ sub write_op {
    my $full_dir = catfile ($decline_dir, 'data', $castle_id, $sub_dir);
    mkdir $full_dir if ! -d $full_dir;
    my ($json,undef) = get_json_and_sha1 ($hashref);
-   if (open (FILE,'>',catfile ($full_dir, $dt . '.' . $microseconds))) {
+   if (open (FILE, '>', catfile ($full_dir, $dt . '.' . $microseconds))) {
 
       print FILE $json;
       close (FILE);
@@ -300,7 +317,7 @@ sub create_new_castle {
    }
 
    my ($castle_id, $castle_dir);
-   while (1) {
+   foreach (1 .. 10000) {
 
       $castle_id = int (rand (10000000));
       $castle_dir = catfile ($decline_dir, 'data', $castle_id);
@@ -330,9 +347,16 @@ sub create_new_castle {
    $op_data->{op} = "create_castle";
    $op_data->{new} = $sha1;
    $op_data->{old} = $old_sha1;
-   write_op ($op_data, $castle_id);
-   write_castle_state ($json, $castle_id);
-   return $castle_id;
+   if (my $lockmrg = lock_data ()) {
+
+      write_op ($op_data, $castle_id);
+      write_castle_state ($json, $castle_id);
+      unlock_data ($lockmgr);
+      return $castle_id;
+   }
+
+   warn "DATA directory locked\n"
+   return 0;
 }
 
 sub buy_army {
@@ -366,9 +390,14 @@ sub buy_army {
         };
         my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
         my ($json, $sha1) = get_json_and_sha1 ($clone_data);
-        write_op ({op => 'buy', name => $arm, dt => $bdt, new => $sha1, old => $old_sha1}, $castle_id);
-        write_castle_state ($json, $castle_id);
-        return 0;
+        if (my $lockmrg = lock_data ()) {
+
+           write_op ({op => 'buy', name => $arm, dt => $bdt, new => $sha1, old => $old_sha1}, $castle_id);
+           write_castle_state ($json, $castle_id);
+           unlock_data ($lockmgr);
+           return 0;
+        }
+        return "DATA directory locked";
       }
    }
    return "Invalid name: $army_name";
@@ -439,9 +468,14 @@ sub move_army {
 
    my (undef,$old_sha1) = get_json_and_sha1 ($castle_ref);
    my ($json,$sha1) = get_json_and_sha1 ($clone_data);
-   write_op ({op => 'move', direction => $direction, dt => get_utc_time (), new => $sha1, old => $old_sha1}, $castle_id);
-   write_castle_state ($json, $castle_id);
-   return 0;
+   if (my $lockmrg = lock_data ()) {
+
+      write_op ({op => 'move', direction => $direction, dt => get_utc_time (), new => $sha1, old => $old_sha1}, $castle_id);
+      write_castle_state ($json, $castle_id);
+      unlock_data ($lockmgr);
+      return 0;
+   }
+   return "DATA directory locked";
 }
 
 sub load_index {
@@ -537,8 +571,16 @@ sub increase_population {
       new                 => $sha1,
       old                 => $old_sha1
    };
-   write_op ($op, $castle_ref->{id});
-   write_castle_state ($json, $castle_ref->{id});
+   if (my $lockmrg = lock_data ()) {
+
+      write_op ($op, $castle_ref->{id});
+      write_castle_state ($json, $castle_ref->{id});
+      unlock_data ($lockmgr);
+   }
+   else {
+
+      warn "DATA directory locked\n";
+   }
 }
 
 sub increase_movement {
@@ -569,8 +611,12 @@ sub increase_movement {
    $clone_data->{laststep} = $dt;
    my (undef,$old_sha1) = get_json_and_sha1 ($castle_ref);
    my ($json,$sha1) = get_json_and_sha1 ($clone_data);
-   write_op ({op => 'increase_movement', data => $ops, dt => $dt, new => $sha1, old => $old_sha1}, $castle_ref->{id});
-   write_castle_state ($json, $castle_ref->{id});
+   if (my $lockmrg = lock_data ()) {
+
+      write_op ({op => 'increase_movement', data => $ops, dt => $dt, new => $sha1, old => $old_sha1}, $castle_ref->{id});
+      write_castle_state ($json, $castle_ref->{id});
+      unlock_data ($lockmgr);
+   }
 }
 
 
