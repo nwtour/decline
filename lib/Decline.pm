@@ -841,7 +841,7 @@ sub generate_svg {
 }
 
 sub update_program_files {
-   my ($full, $force) = @_;
+   my ($full, $sha1) = @_;
 
    mkdir (catfile ($decline_dir, 'update'));
 
@@ -867,19 +867,24 @@ sub update_program_files {
       my @local_file = split (/\//, $file->fileName);
       shift (@local_file);
 
+      if ($sha1 && sha1_hex ($file->fileName) eq $sha1) {
+
+         $somezip->extractMember ($file->fileName, catfile (@local_file));
+      }
+
       my $stat = stat (catfile (@local_file));
 
       if (! defined ($stat)) {
 
-         $result->{ catfile (@local_file) } = 1;
+         $result->{ catfile (@local_file) } = sha1_hex ($file->fileName);
       }
       elsif (stat (catfile (@local_file))->size ne $file->uncompressedSize) {
 
-         $result->{ catfile (@local_file) } = 1;
+         $result->{ catfile (@local_file) } = sha1_hex ($file->fileName);
       }
       elsif ($full) {
 
-         $result->{ catfile (@local_file) } = 0;
+         $result->{ catfile (@local_file) } = undef;
       }
    }
    return $result;

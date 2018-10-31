@@ -3,9 +3,9 @@
 
 % if (scalar (keys %{$params->{files}})) {
      <h1>Доступны новые файлы для обновления</h1><br>
-%    foreach my $file (keys %{$params->{files}}) {
+%    foreach my $file (sort {$a cmp $b } keys %{$params->{files}}) {
 
-        <%= $file %><br>
+        <%= $file %> <a href="/global/settings/?update=<%= $params->{files}{$file} %>">Обновить файл</a><br><br>
 %    }
 % }
 % end

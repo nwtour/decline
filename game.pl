@@ -161,7 +161,7 @@ any '/global/:select' => sub {
    }
    elsif ($select eq 'settings') {
 
-      $params->{files} = Decline::update_program_files ();
+      $params->{files} = Decline::update_program_files (0,$c->param ('update'));
    }
    elsif ($select eq 'sync') {
 
