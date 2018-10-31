@@ -33,7 +33,8 @@ our $army = {
 };
 
 sub lock_data {
-   my $lockmgr = LockFile::Simple->make (-format => '/home/nwtour/decgit/data/%f.lck', -max => 1, -delay => 1, -stale => 1);
+   my $format = catfile ($decline_dir, 'data', '%f.lck');
+   my $lockmgr = LockFile::Simple->make (-format => $format, -max => 1, -delay => 1, -stale => 1);
 
    foreach (1 .. 3) {
 
@@ -77,6 +78,12 @@ sub get_gpg_path {
    return undef;
 }
 
+sub get_gpg_path_escape {
+   my $file = get_gpg_path ();
+   $file = '"' . $file . '"' if $file =~ /\s/;
+   return $file;
+}
+
 sub gen_gpg_batch_file {
 
    my $batch_file = catfile ($decline_dir, 'key', 'gpg.batch.txt');
@@ -99,6 +106,9 @@ sub gen_gpg_batch_file {
 }
 
 sub keys_json_file {
+
+   mkdir catfile ($decline_dir, 'data');
+
    return catfile ($decline_dir, 'data', 'keys.json');
 }
 
@@ -125,10 +135,9 @@ sub set_key_attribute {
 
 sub init_keys_json {
 
-   my $homedir = catfile ($decline_dir, 'key');
    my $result = {};
 
-   if (open (PIPE, '-|', get_gpg_path () ." -a --homedir $homedir --batch --no-comment --no-version --with-colons --list-keys")) {
+   if (open (PIPE, '-|', get_gpg_path_escape () ." -a --homedir key --batch --no-comment --no-version --with-colons --list-keys")) {
 
       while (my $str = <PIPE>) {
 
