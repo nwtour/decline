@@ -10,7 +10,6 @@ use Mojo::UserAgent;
 use Time::HiRes qw(gettimeofday);
 use Digest::SHA  qw(sha1_hex);
 use SVG;
-use GPG;
 use LWP::Simple qw(mirror);
 use LWP::Protocol::https;
 use Archive::Zip;
@@ -82,13 +81,15 @@ sub gen_gpg_batch_file {
 
    my $batch_file = catfile ($decline_dir, 'key', 'gpg.batch.txt');
 
+   my $rand = int (rand (100000000));
+
    if (open (FILE, '>', $batch_file)) {
 
       print FILE "%echo Generating a basic OpenPGP key\n";
       print FILE "Key-Type: RSA\n";
-      print FILE "Name-Real: Test\n";
-      print FILE "Name-Comment: Test\n";
-      print FILE "Name-Email: joe\@foo.bar\n";
+      print FILE "Name-Real: Test$rand\n";
+      print FILE "Name-Comment: Test$rand\n";
+      print FILE "Name-Email: joe$rand\@foo.bar\n";
       print FILE "Expire-Date: 0\n";
       print FILE "%commit\n";
       print FILE "%echo done\n";
@@ -97,21 +98,74 @@ sub gen_gpg_batch_file {
    return $batch_file;
 }
 
-sub get_key_id {
-
-   my $gpg = new GPG(debug => 0, homedir => catfile ($decline_dir, 'key'), gnupg_path => get_gpg_path ());
-
-   my $keys = $gpg->list_sig();
-
-   foreach my $k (@{$keys}) {
-
-      return $k->{key_id} if exists $k->{sig} && $k->{key_id};
-   }
-
-   return undef;
+sub keys_json_file {
+   return catfile ($decline_dir, 'data', 'keys.json');
 }
 
-#TODO
+sub save_keys_json {
+   my $result = shift;
+
+   my ($json, undef) = get_json_and_sha1 ($result);
+   if (open (FILE, '>', keys_json_file ())) {
+
+      print FILE $json;
+      close (FILE);
+   }
+}
+
+sub set_key_attribute {
+   my ($key, $attribute, $value) = @_;
+
+   my $result = get_keys ();
+
+   $result->{$key}{$attribute} = $value;
+
+   save_keys_json ($result);
+}
+
+sub init_keys_json {
+
+   my $homedir = catfile ($decline_dir, 'key');
+   my $result = {};
+
+   if (open (PIPE, '-|', get_gpg_path () ." -a --homedir $homedir --batch --no-comment --no-version --with-colons --list-keys")) {
+
+      while (my $str = <PIPE>) {
+
+         my @list = split (/:/, $str);
+         $result->{ $list[4] }{type} = $list[1] if $list[0] eq 'pub'
+      }
+      close (PIPE);
+   }
+
+   save_keys_json ($result);
+}
+
+sub get_keys {
+
+   my $result = load_json (keys_json_file ());
+   return $result;
+}
+
+sub get_key_id {
+
+   my $result = get_keys ();
+   foreach my $k (keys %{$result}) {
+
+      return $k if $result->{$k}{type} eq 'u';
+   }
+}
+
+sub get_my_port {
+
+   my $key = get_key_id ();
+   my $result = get_keys ();
+
+   return 0 if ! defined $result || ! $key;
+
+   return ($result->{$key}{port} || 0);
+}
+
 sub create_new_key {
    my $gpg_path = shift;
 
@@ -125,13 +179,23 @@ sub create_new_key {
             '--batch',
             gen_gpg_batch_file ());
 
-   if (get_key_id ()) {
+   unlink (keys_json_file ());
+   init_keys_json ();
 
+   if (my $keyid = get_key_id ()) {
+
+      my $cmd = join (" ", ($gpg_path, '--homedir', $homedir, '--export', '--armor', '--output', catfile ($decline_dir, 'data', "$keyid.asc")));
+      my $res = system ($gpg_path, '--homedir', $homedir, '--export', '--armor', '--output', catfile ($decline_dir, 'data', "$keyid.asc"));
+      warn "$cmd $res $!\n";
       if (open (FILE, '>', catfile ($decline_dir, 'key', 'gpg_path.txt'))) {
 
          print FILE $gpg_path;
          close (FILE);
       }
+   }
+   else {
+
+      warn "Key generation failed\n";
    }
 }
 
@@ -255,6 +319,36 @@ sub write_castle_state {
    $index = {};
 }
 
+sub write_kingdom_state {
+
+   my $result = {};
+   foreach my $castle (sort {$a->{id} <=> $b->{id}} list_castles ()) {
+
+      my (undef,$sha1) = get_json_and_sha1 ($castle);
+      $result->{ $castle->{id} } = $sha1;
+   }
+   my ($json,undef) = get_json_and_sha1 ($result);
+   if (open (FILE, '>', catfile ($decline_dir, 'data', 'kingdom.json'))) {
+
+      print FILE $json;
+      close (FILE);
+   }
+}
+
+sub atomic_write_data {
+   my ($castle_id, $json, $op) = @_;
+
+   if (my $lockmrg = lock_data ()) {
+
+      write_op ($op, $castle_id);
+      write_castle_state ($json, $castle_id);
+      write_kingdom_state ();
+      unlock_data ($lockmrg);
+      return 0;
+   }
+   return "DATA directory locked";
+}
+
 # TODO
 sub create_new_coord {
 
@@ -347,16 +441,12 @@ sub create_new_castle {
    $op_data->{op} = "create_castle";
    $op_data->{new} = $sha1;
    $op_data->{old} = $old_sha1;
-   if (my $lockmrg = lock_data ()) {
+   if (my $err = atomic_write_data ($castle_id, $json, $op_data)) {
 
-      write_op ($op_data, $castle_id);
-      write_castle_state ($json, $castle_id);
-      unlock_data ($lockmgr);
-      return $castle_id;
+      warn "$err\n";
+      return 0;
    }
-
-   warn "DATA directory locked\n"
-   return 0;
+   return $castle_id;
 }
 
 sub buy_army {
@@ -369,35 +459,33 @@ sub buy_army {
 
       if ($arm eq $army_name) {
 
-        return "Not enought gold" if $army->{$arm}{1}{cost} > $castle_ref->{gold};
-        return "Not enought population" if $castle_ref->{population} < 10;
+         return "Not enought gold" if $army->{$arm}{1}{cost} > $castle_ref->{gold};
+         return "Not enought population" if $castle_ref->{population} < 10;
 
-        my $clone_data = clone_data ($castle_ref);
-        return "Internal error: $@" if ! exists $clone_data->{mapid};
-        $clone_data->{gold} -= $army->{$arm}{1}{cost};
-        $clone_data->{population} -= 10;
-        my (undef,undef,$mcs,$bdt) = entropy ();
-        return "Internal error: key exists" if exists $clone_data->{army}{ $bdt . $mcs };
-        $clone_data->{army}{$bdt . $mcs} = {
-           name       => $army_name,
-           x          => $castle_ref->{x},
-           y          => $castle_ref->{y},
-           level      => 1,
-           expirience => 0,
-           movement   => $army->{$arm}{1}{movement},
-           bdt        => $bdt,
-           health     => 100
-        };
-        my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
-        my ($json, $sha1) = get_json_and_sha1 ($clone_data);
-        if (my $lockmrg = lock_data ()) {
+         my $clone_data = clone_data ($castle_ref);
+         return "Internal error: $@" if ! exists $clone_data->{mapid};
+         $clone_data->{gold} -= $army->{$arm}{1}{cost};
+         $clone_data->{population} -= 10;
+         my (undef,undef,$mcs,$bdt) = entropy ();
+         return "Internal error: key exists" if exists $clone_data->{army}{ $bdt . $mcs };
+         $clone_data->{army}{$bdt . $mcs} = {
+            name       => $army_name,
+            x          => $castle_ref->{x},
+            y          => $castle_ref->{y},
+            level      => 1,
+            expirience => 0,
+            movement   => $army->{$arm}{1}{movement},
+            bdt        => $bdt,
+            health     => 100
+         };
+         my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
+         my ($json, $sha1) = get_json_and_sha1 ($clone_data);
 
-           write_op ({op => 'buy', name => $arm, dt => $bdt, new => $sha1, old => $old_sha1}, $castle_id);
-           write_castle_state ($json, $castle_id);
-           unlock_data ($lockmgr);
-           return 0;
-        }
-        return "DATA directory locked";
+         if (my $err = atomic_write_data ($castle_id, $json, {op => 'buy', name => $arm, dt => $bdt, new => $sha1, old => $old_sha1})) {
+
+            return $err;
+         }
+         return 0;
       }
    }
    return "Invalid name: $army_name";
@@ -468,14 +556,11 @@ sub move_army {
 
    my (undef,$old_sha1) = get_json_and_sha1 ($castle_ref);
    my ($json,$sha1) = get_json_and_sha1 ($clone_data);
-   if (my $lockmrg = lock_data ()) {
+   if (my $err = atomic_write_data ($castle_id, $json, {op => 'move', direction => $direction, dt => get_utc_time (), new => $sha1, old => $old_sha1})) {
 
-      write_op ({op => 'move', direction => $direction, dt => get_utc_time (), new => $sha1, old => $old_sha1}, $castle_id);
-      write_castle_state ($json, $castle_id);
-      unlock_data ($lockmgr);
-      return 0;
+      return $err;
    }
-   return "DATA directory locked";
+   return 0;
 }
 
 sub load_index {
@@ -571,15 +656,9 @@ sub increase_population {
       new                 => $sha1,
       old                 => $old_sha1
    };
-   if (my $lockmrg = lock_data ()) {
+   if (my $err = atomic_write_data ($castle_ref->{id}, $json, $op)) {
 
-      write_op ($op, $castle_ref->{id});
-      write_castle_state ($json, $castle_ref->{id});
-      unlock_data ($lockmgr);
-   }
-   else {
-
-      warn "DATA directory locked\n";
+      warn "$err\n";
    }
 }
 
@@ -611,11 +690,9 @@ sub increase_movement {
    $clone_data->{laststep} = $dt;
    my (undef,$old_sha1) = get_json_and_sha1 ($castle_ref);
    my ($json,$sha1) = get_json_and_sha1 ($clone_data);
-   if (my $lockmrg = lock_data ()) {
+   if (my $err = atomic_write_data ($castle_ref->{id}, $json, {op => 'increase_movement', data => $ops, dt => $dt, new => $sha1, old => $old_sha1})) {
 
-      write_op ({op => 'increase_movement', data => $ops, dt => $dt, new => $sha1, old => $old_sha1}, $castle_ref->{id});
-      write_castle_state ($json, $castle_ref->{id});
-      unlock_data ($lockmgr);
+      warn "$err\n";
    }
 }
 

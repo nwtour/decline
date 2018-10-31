@@ -39,13 +39,10 @@ function loadPage() {
    </div>
    <div class="content" id="div_content">
 %= content header => begin
-   Default content (header)
 % end
 %= content base => begin
-   Default content (base)
 % end
 %= content footer => begin
-   Default content (footer)
 % end
    </div>
 </body></html>

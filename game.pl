@@ -47,16 +47,9 @@ any '/:select/:castle/dynamic.js' => sub {
    return $c->render (template => 'dynamic_js');
 };
 
-any '/static/:file' => sub {
+any '/static/#file' => sub {
    my $c = shift;
-   my $file = $c->param('file');
-
-   foreach my $valid_extention ('jpg', 'css', 'js', 'gif', 'png') {
-      if (-f catfile ($static_path, "$file.$valid_extention")){
-         return $c->reply->static( "$file.$valid_extention" );
-      }
-   }      
-   $c->render (text => "Error $file");
+   return $c->reply->static ($c->param ('file'));
 };
 
 any '/buy/:name/:castle' => sub {
@@ -170,6 +163,17 @@ any '/global/:select' => sub {
 
       $params->{files} = Decline::update_program_files ();
    }
+   elsif ($select eq 'sync') {
+
+      if ($c->param ('ip') && $c->param ('ip') =~ /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/ && $c->param ('port') && $c->param ('port') =~ /^(\d+)$/) {
+
+         Decline::set_key_attribute ($key, 'ip', $c->param ('ip'));
+         Decline::set_key_attribute ($key, 'port', $c->param ('port'));
+         return $c->redirect_to ("/global/sync");
+      }
+      $params->{keys} = Decline::get_keys ();
+   }
+
 
    $c->stash (hash => $hash, castle => undef, select => $select, key => $key, params => $params);
 
