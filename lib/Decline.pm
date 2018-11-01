@@ -15,6 +15,7 @@ use LWP::Protocol::https;
 use Archive::Zip;
 use File::stat;
 use LockFile::Simple;
+use File::Copy qw(copy);
 
 our $decline_dir;
 our $version = 1;
@@ -32,12 +33,127 @@ our $army = {
    },
 };
 
+sub get_decline_dir {
+   die "\$decline_dir undefined\n" unless $decline_dir;
+   die "Bad decline_dir\n" unless -d $decline_dir;
+   return $decline_dir;
+}
+
+sub read_file_slurp {
+   my $path = shift;
+   my $result = '';
+
+   if (open (FILE, '<', $path)) {
+
+      $result .= $_ while (<FILE>);
+      close (FILE);
+   }
+   return $result;
+}
+
+sub sha1_hex_file {
+   my $path = shift;
+
+   return sha1_hex (read_file_slurp ($path));
+}
+
+sub op_stringification {
+   my $op = shift;
+
+   $op = sprintf ("%07d", $op);
+   return "$op";
+}
+
+sub set_gpg_path {
+   my $path = shift;
+
+   if (open (FILE, '>', catfile (get_decline_dir (), 'key', 'gpg_path.txt'))) {
+
+      print FILE $path;
+      close (FILE);
+   }
+}
+
+sub get_gpg_path {
+
+   my $path = read_file_slurp (catfile (get_decline_dir (), 'key', 'gpg_path.txt'));
+   return $path if $path;
+
+   foreach my $file ('C:\Program Files\GNU\GnuPG\gpg.exe', '/usr/bin/gpg' ) {
+
+      next if ! -e $file;
+      set_gpg_path ($file);
+      return $file;
+   }
+   return undef;
+}
+
+sub gpg_add_key {
+   my ($path, $key_id) = @_;
+
+   my @list = (
+      get_gpg_path (),
+      '--homedir',
+      catfile (get_decline_dir (), 'key'),
+      '--batch',
+      '--yes',
+      '--import',
+      $path
+   );
+
+   # warn join (' ', @list);
+   my $rc = system (@list);
+   my $destination = catfile (get_decline_dir (), 'data', "$key_id.asc");
+   if (! $rc && ! -e $destination) {
+
+      copy ($path, $destination);
+   }
+   return $rc;
+}
+
+sub gpg_create_signature {
+   my ($source, $signature) = @_;
+
+   my $rc = system (
+      get_gpg_path (),
+      '--homedir',
+      catfile (get_decline_dir (), 'key'),
+      '--batch',
+      '--yes',
+      '--output',
+      $signature,
+      '--detach-sig',
+      $source
+   );
+   warn "gpg_create_signature $source -> $signature failed\n" if $?;
+}
+
+sub gpg_verify_signature {
+   my ($source, $signature) = @_;
+
+   my @list = (
+      get_gpg_path (),
+      '--homedir',
+      catfile (get_decline_dir (), 'key'),
+      '--batch',
+      '--yes',
+      '--verify',
+      $signature,
+      $source
+   );
+
+   # warn join (' ', @list, "\n");
+   my $rc = system (@list);
+   return $rc;
+}
+
 sub lock_data {
-   my $format = catfile ($decline_dir, 'data', '%f.lck');
+   my $format = catfile (get_decline_dir (), 'data', '%f.lck');
    my $lockmgr = LockFile::Simple->make (-format => $format, -max => 1, -delay => 1, -stale => 1);
 
-   foreach (1 .. 3) {
+   foreach my $try (1 .. 3) {
 
+      warn "trylock $try\n" if $try ne 1;
       return $lockmgr if $lockmgr->lock ("file");
    }
    return undef;
@@ -49,35 +165,6 @@ sub unlock_data {
    $lockmgr->unlock("file") if $lockmgr;
 }
 
-sub set_gpg_path {
-   my $path = shift;
-
-   if (open (FILE, '>', catfile ($decline_dir, 'key', 'gpg_path.txt'))) {
-
-      print FILE $path;
-      close (FILE);
-   }
-}
-
-sub get_gpg_path {
-
-   my $path;
-   if (open (FILE, '<', catfile ($decline_dir, 'key', 'gpg_path.txt'))) {
-
-      $path = $_ while (<FILE>);
-      close (FILE);
-      return $path;
-   }
-
-   foreach my $file ('C:\Program Files\GNU\GnuPG\gpg.exe', '/usr/bin/gpg' ) {
-
-      next if ! -e $file;
-      set_gpg_path ($file);
-      return $file;
-   }
-   return undef;
-}
-
 sub get_gpg_path_escape {
    my $file = get_gpg_path ();
    $file = '"' . $file . '"' if $file =~ /\s/;
@@ -86,7 +173,7 @@ sub get_gpg_path_escape {
 
 sub gen_gpg_batch_file {
 
-   my $batch_file = catfile ($decline_dir, 'key', 'gpg.batch.txt');
+   my $batch_file = catfile (get_decline_dir (), 'key', 'gpg.batch.txt');
 
    my $rand = int (rand (100000000));
 
@@ -107,9 +194,9 @@ sub gen_gpg_batch_file {
 
 sub keys_json_file {
 
-   mkdir catfile ($decline_dir, 'data');
+   mkdir catfile (get_decline_dir (), 'data');
 
-   return catfile ($decline_dir, 'data', 'keys.json');
+   return catfile (get_decline_dir (), 'data', 'keys.json');
 }
 
 sub save_keys_json {
@@ -136,6 +223,7 @@ sub set_key_attribute {
 sub init_keys_json {
 
    my $result = {};
+   $result = load_json (keys_json_file ()) if -f keys_json_file ();
 
    if (open (PIPE, '-|', get_gpg_path_escape () ." -a --homedir key --batch --no-comment --no-version --with-colons --list-keys")) {
 
@@ -178,25 +266,40 @@ sub get_my_port {
 sub create_new_key {
    my $gpg_path = shift;
 
-   my $homedir = catfile ($decline_dir, 'key');
+   my $homedir = catfile (get_decline_dir (), 'key');
    mkdir $homedir;
 
-   system ( $gpg_path,
-            '--homedir',
-            $homedir,
-            '--gen-key',
-            '--batch',
-            gen_gpg_batch_file ());
+   my @list = (
+      $gpg_path,
+      '--homedir',
+      $homedir,
+      '--gen-key',
+      '--batch',
+      gen_gpg_batch_file ()
+   );
+
+   my $rc = system (@list);
+
+   # warn join (' ', @list ) ." $rc $!\n";
 
    unlink (keys_json_file ());
    init_keys_json ();
 
    if (my $keyid = get_key_id ()) {
 
-      my $cmd = join (" ", ($gpg_path, '--homedir', $homedir, '--export', '--armor', '--output', catfile ($decline_dir, 'data', "$keyid.asc")));
-      my $res = system ($gpg_path, '--homedir', $homedir, '--export', '--armor', '--output', catfile ($decline_dir, 'data', "$keyid.asc"));
-      warn "$cmd $res $!\n";
-      if (open (FILE, '>', catfile ($decline_dir, 'key', 'gpg_path.txt'))) {
+      @list = (
+         $gpg_path,
+         '--homedir',
+         $homedir,
+         '--export',
+         '--armor',
+         '--output',
+         catfile (get_decline_dir (), 'data', "$keyid.asc")
+      );
+      $rc = system (@list);
+      # warn join (' ', @list ) ." $rc $!\n";
+      # TODO config.json
+      if (open (FILE, '>', catfile (get_decline_dir (), 'key', 'gpg_path.txt'))) {
 
          print FILE $gpg_path;
          close (FILE);
@@ -277,50 +380,55 @@ sub part_json {
 
 sub load_json {
    my $path = shift;
-   my $json = '';
-   if (open (FILE, '<', $path)) {
-       while (<FILE>) {
-          $json .= $_;
-       }
-       close (FILE);
-       my $array_ref = decode_json ($json);
-       return part_json ($array_ref);
-   }
-   return undef;
+   my $json = read_file_slurp ($path);
+   my $array_ref = decode_json ($json);
+   return part_json ($array_ref);
 }
 
-# Возвращаем unixtime в трёх частях
-# первые пять символов: часть которая редко меняется (раз в сутки)
-# последние пять символов: меняется каждую секунду
-# первые три цифры микросекунд: действия редко происходят чаще чем тысячная секунды
-sub entropy {
+sub microseconds {
    my (undef, $microseconds) = gettimeofday;
    $microseconds = sprintf ("%06d", $microseconds);
    $microseconds = substr ($microseconds, 0, 3);
-   my $dt = get_utc_time ();
-   my $first = substr ($dt, 0, 5);
-   my $second = substr ($dt, 5);
-   return ($first,$second,$microseconds,$dt);
+   return $microseconds;
 }
 
 sub write_op {
    my ($hashref, $castle_id) = @_;
 
-   my ($sub_dir, undef, $microseconds, $dt) = entropy ();
-   my $full_dir = catfile ($decline_dir, 'data', $castle_id, $sub_dir);
+   my ($sub_dir, $file);
+
+   if ($hashref->{opid} && $hashref->{opid} =~ /^(\d{4})(\d{3})$/) {
+
+      $sub_dir = $1;
+      $file    = $2;
+   }
+   else {
+
+      return (1, "Bad operation ID ($hashref->{op} -> $hashref->{opid})");
+   }
+
+   my $full_dir = catfile (get_decline_dir (), 'data', $castle_id, $sub_dir);
    mkdir $full_dir if ! -d $full_dir;
-   my ($json,undef) = get_json_and_sha1 ($hashref);
-   if (open (FILE, '>', catfile ($full_dir, $dt . '.' . $microseconds))) {
+
+   my $path_to_file = catfile ($full_dir, $file . '.json');
+
+   return (1, "exist operation file $path_to_file") if -e $path_to_file;
+
+   my ($json, undef) = get_json_and_sha1 ($hashref);
+   if (open (FILE, '>', $path_to_file)) {
 
       print FILE $json;
       close (FILE);
+
+      return (0, $path_to_file, catfile ($full_dir, $file . '.sig'));
    }
+   return (1, "Unable open file $path_to_file");
 }
 
 sub write_castle_state {
    my ($json, $castle_id) = @_;
 
-   if (open (FILE, '>', catfile ($decline_dir, 'data', $castle_id, 'state.json'))) {
+   if (open (FILE, '>', catfile (get_decline_dir (), 'data', $castle_id, 'state.json'))) {
       print FILE $json;
       close (FILE);
    }
@@ -337,7 +445,7 @@ sub write_kingdom_state {
       $result->{ $castle->{id} } = $sha1;
    }
    my ($json,undef) = get_json_and_sha1 ($result);
-   if (open (FILE, '>', catfile ($decline_dir, 'data', 'kingdom.json'))) {
+   if (open (FILE, '>', catfile (get_decline_dir (), 'data', 'kingdom.json'))) {
 
       print FILE $json;
       close (FILE);
@@ -349,13 +457,18 @@ sub atomic_write_data {
 
    if (my $lockmrg = lock_data ()) {
 
-      write_op ($op, $castle_id);
+      my ($rc, @list) = write_op ($op, $castle_id);
+      if ($rc) {
+
+         unlock_data ($lockmrg);
+         return ($rc, $list[0]);
+      }
       write_castle_state ($json, $castle_id);
       write_kingdom_state ();
       unlock_data ($lockmrg);
-      return 0;
+      return (0, @list);
    }
-   return "DATA directory locked";
+   return (1, "DATA directory locked");
 }
 
 # TODO
@@ -366,13 +479,14 @@ sub create_new_coord {
 
 sub load_castle {
    my $castle_id = shift;
-   my $file_path = catfile ($decline_dir, 'data', $castle_id, 'state.json');
+   my $file_path = catfile (get_decline_dir (), 'data', $castle_id, 'state.json');
+
    return load_json ($file_path);
 }
 
 sub list_castles {
    my @list;
-   foreach my $dir (glob (catfile ($decline_dir, 'data') . "/*")) {
+   foreach my $dir (glob (catfile (get_decline_dir (), 'data') . "/*")) {
 
       next if ! -d $dir;
       next if ! -e catfile ($dir, 'state.json');
@@ -412,25 +526,24 @@ sub clone_data {
    return $new_ref;
 }
 
-sub create_new_castle {
-   my ($key,$hour) = @_;
+sub unauthorised_create_castle {
+   my $struct = shift;
+
+   my $key       = $struct->{key};
+   my $stepdt    = $struct->{stepdt};
+   my $castle_id = $struct->{id};
+   my $x         = $struct->{x};
+   my $y         = $struct->{y};
+   my $mapid     = $struct->{mapid};
+   my $dt        = $struct->{dt};
 
    if (restrict_new_castle ($key)) {
+
       return 0;
    }
 
-   my ($castle_id, $castle_dir);
-   foreach (1 .. 10000) {
-
-      $castle_id = int (rand (10000000));
-      $castle_dir = catfile ($decline_dir, 'data', $castle_id);
-      last if ! -d $castle_dir;
-   }
+   my $castle_dir = catfile (get_decline_dir (), 'data', $castle_id);
    mkdir $castle_dir;
-   my $dt = get_utc_time ();
-   my ($x, $y, $mapid) = create_new_coord ();
-   my $stepdt = $hour - localtimezone_offset ();
-   $stepdt += 24 if $stepdt < 0;
    my $data = {
       key        => $key,
       dt         => $dt,
@@ -443,6 +556,7 @@ sub create_new_castle {
       army       => {},
       stepdt     => $stepdt,
       laststep   => $dt,
+      opid       => '0000000',
    };
    my $op_data = clone_data ($data);
    my ($json, $sha1) = get_json_and_sha1 ($data);
@@ -450,14 +564,36 @@ sub create_new_castle {
    $op_data->{op} = "create_castle";
    $op_data->{new} = $sha1;
    $op_data->{old} = $old_sha1;
-   if (my $err = atomic_write_data ($castle_id, $json, $op_data)) {
-
-      warn "$err\n";
-      return 0;
-   }
-   return $castle_id;
+   return atomic_write_data ($castle_id, $json, $op_data);
 }
 
+sub create_new_castle {
+   my ($key,$hour) = @_;
+
+   my ($castle_id);
+   foreach (1 .. 10000) {
+
+      $castle_id = int (rand (10000000));
+      last if ! -d catfile (get_decline_dir (), 'data', $castle_id);
+   }
+   my $dt = get_utc_time ();
+   my ($x, $y, $mapid) = create_new_coord ();
+   my $stepdt = $hour - localtimezone_offset ();
+   $stepdt += 24 if $stepdt < 0;
+   my ($rc, @data) = unauthorised_create_castle ({
+      key    => $key,
+      stepdt => $stepdt,
+      id     => $castle_id,
+      x      => $x,
+      y      => $y,
+      mapid  => $mapid,
+      dt     => $dt
+   });
+
+   gpg_create_signature (@data) if ! $rc;
+}
+
+# TODO signature
 sub buy_army {
    my ($castle_id, $army_name) = @_;
 
@@ -475,25 +611,32 @@ sub buy_army {
          return "Internal error: $@" if ! exists $clone_data->{mapid};
          $clone_data->{gold} -= $army->{$arm}{1}{cost};
          $clone_data->{population} -= 10;
-         my (undef,undef,$mcs,$bdt) = entropy ();
-         return "Internal error: key exists" if exists $clone_data->{army}{ $bdt . $mcs };
-         $clone_data->{army}{$bdt . $mcs} = {
+         my $dt  = get_utc_time ();
+         my $mcs = microseconds ();
+         if (exists $clone_data->{army}{$dt . $mcs}) {
+
+            sleep 1;
+            $mcs = microseconds ();
+            $dt  = get_utc_time ();
+         }
+         return "Internal error: key exists" if exists $clone_data->{army}{$dt . $mcs};
+         $clone_data->{army}{$dt . $mcs} = {
             name       => $army_name,
             x          => $castle_ref->{x},
             y          => $castle_ref->{y},
             level      => 1,
             expirience => 0,
             movement   => $army->{$arm}{1}{movement},
-            bdt        => $bdt,
+            bdt        => $dt,
             health     => 100
          };
+         $clone_data->{opid} = op_stringification (++$clone_data->{opid});
          my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
          my ($json, $sha1) = get_json_and_sha1 ($clone_data);
 
-         if (my $err = atomic_write_data ($castle_id, $json, {op => 'buy', name => $arm, dt => $bdt, new => $sha1, old => $old_sha1})) {
+         my ($rc, $err) = atomic_write_data ($castle_id, $json, {op => 'buy', name => $arm, dt => $dt, new => $sha1, old => $old_sha1, opid => $clone_data->{opid}});
 
-            return $err;
-         }
+         return $err if $rc;
          return 0;
       }
    }
@@ -515,22 +658,22 @@ sub coord_for_direction {
 sub has_move_army {
    my ($castle_id, $aid, $direction) = @_;
 
-   return (0,"Invalid direction $direction") if $direction !~ /^(ne|nw|n|se|sw|s|w|e)$/;
+   return (0, "Invalid direction $direction") if $direction !~ /^(ne|nw|n|se|sw|s|w|e)$/;
 
-   return (0,"Invalid army id") unless $aid;
+   return (0, "Invalid army id") unless $aid;
 
    my $castle_ref = load_castle ($castle_id);
    my $mapid = $castle_ref->{mapid};
-   return (0,"Invalid castle id $castle_id") unless $mapid;
+   return (0, "Invalid castle id $castle_id") unless $mapid;
 
-   return (0,"Not enought movement points") unless $castle_ref->{army}{$aid}{movement};
+   return (0, "Not enought movement points") unless $castle_ref->{army}{$aid}{movement};
 
    my ($x, $y) = coord_for_direction ($castle_ref->{army}{$aid}{x}, $castle_ref->{army}{$aid}{y}, $direction);
 
    my $dest = picture_by_coord ($mapid, $x, $y);
    if (! ref ($dest)) {
 
-      return (0,"End of Kingdom") if $dest eq 0;
+      return (0, "End of Kingdom") if $dest eq 0;
       return (1);
    }
    my (undef, $cid, $caid) = @{ $dest };
@@ -539,7 +682,7 @@ sub has_move_army {
       return (2, $cid, $caid);
    }
    return (1) unless $caid; # To Castle
-   return (0,"Busy");
+   return (0, "Busy");
 }
 
 sub has_move_army2 {
@@ -547,6 +690,7 @@ sub has_move_army2 {
   return $rc;
 }
 
+# TODO signature
 sub move_army {
    my ($castle_id, $aid, $direction) = @_;
 
@@ -563,12 +707,12 @@ sub move_army {
    ($clone_data->{army}{$aid}{x},$clone_data->{army}{$aid}{y}) =
       coord_for_direction ($clone_data->{army}{$aid}{x},$clone_data->{army}{$aid}{y},$direction);
 
+   $clone_data->{opid} = op_stringification (++$clone_data->{opid});
    my (undef,$old_sha1) = get_json_and_sha1 ($castle_ref);
    my ($json,$sha1) = get_json_and_sha1 ($clone_data);
-   if (my $err = atomic_write_data ($castle_id, $json, {op => 'move', direction => $direction, dt => get_utc_time (), new => $sha1, old => $old_sha1})) {
+   my ($rc, $err) = atomic_write_data ($castle_id, $json, {op => 'move', direction => $direction, dt => get_utc_time (), new => $sha1, old => $old_sha1, opid => $clone_data->{opid}});
 
-      return $err;
-   }
+   return $err if $rc;
    return 0;
 }
 
@@ -609,20 +753,16 @@ sub picture_by_coord {
 
 sub get_network_index {
    my $network = {};
-   if (open (FILE, '<', catfile ($decline_dir, 'index', 'network.json'))) {
+   my $data = read_file_slurp (catfile (get_decline_dir (), 'index', 'network.json'));
 
-      my $data = '';
-      $data .= $_ while (<FILE>);
-      close (FILE);
-      $network = decode_json ($data);
-   }
+   $network = decode_json ($data) if $data;
    return $network;
 }
 
 sub write_network_index {
    my $network = shift;
 
-   if (open (FILE,'>',catfile ($decline_dir, 'index', 'network.json'))) {
+   if (open (FILE, '>', catfile (get_decline_dir (), 'index', 'network.json'))) {
 
       print FILE encode_json ($network);
       close (FILE);
@@ -655,6 +795,8 @@ sub increase_population {
    $clone_data->{gold} += $gold;
    $clone_data->{population} += $population;
 
+   $clone_data->{opid} = op_stringification (++$clone_data->{opid});
+
    my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
    my ($json, $sha1) = get_json_and_sha1 ($clone_data);
    my $op = {
@@ -663,12 +805,11 @@ sub increase_population {
       population_increase => $population,
       dt                  => $dt,
       new                 => $sha1,
-      old                 => $old_sha1
+      old                 => $old_sha1,
+      opid                => $clone_data->{opid},
    };
-   if (my $err = atomic_write_data ($castle_ref->{id}, $json, $op)) {
-
-      warn "$err\n";
-   }
+   my ($rc, $err) = atomic_write_data ($castle_ref->{id}, $json, $op);
+   warn "$err\n" if $rc;
 }
 
 sub increase_movement {
@@ -697,12 +838,12 @@ sub increase_movement {
    }
 
    $clone_data->{laststep} = $dt;
-   my (undef,$old_sha1) = get_json_and_sha1 ($castle_ref);
-   my ($json,$sha1) = get_json_and_sha1 ($clone_data);
-   if (my $err = atomic_write_data ($castle_ref->{id}, $json, {op => 'increase_movement', data => $ops, dt => $dt, new => $sha1, old => $old_sha1})) {
+   $clone_data->{opid} = op_stringification (++$clone_data->{opid});
+   my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
+   my ($json, $sha1) = get_json_and_sha1 ($clone_data);
+   my ($rc, $err) = atomic_write_data ($castle_ref->{id}, $json, {op => 'increase_movement', data => $ops, dt => $dt, new => $sha1, old => $old_sha1, opid => $clone_data->{opid}});
 
-      warn "$err\n";
-   }
+   warn "$err\n" if $rc;
 }
 
 
@@ -774,7 +915,6 @@ sub get_updates {
    }
    # https://metacpan.org/pod/Mojo::UserAgent
    return 0;
-
 }
 
 sub random_color {
@@ -843,9 +983,9 @@ sub generate_svg {
 sub update_program_files {
    my ($full, $sha1) = @_;
 
-   mkdir (catfile ($decline_dir, 'update'));
+   mkdir (catfile (get_decline_dir (), 'update'));
 
-   my $archive_file = catfile ($decline_dir, "update", "master.zip");
+   my $archive_file = catfile (get_decline_dir (), "update", "master.zip");
 
    my $stat = stat ($archive_file);
 
