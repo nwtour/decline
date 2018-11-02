@@ -579,7 +579,7 @@ sub unauthorised_create_castle {
 
    if (restrict_new_castle ($key)) {
 
-      return 0;
+      return (1, "No time for new castle");
    }
 
    my $castle_dir = catfile (get_decline_dir (), 'data', $castle_id);
@@ -912,7 +912,7 @@ sub local_update_castle {
 sub local_updates {
 
    my $dt = get_utc_time ();
-   foreach my $castlehr (list_castles ()) {
+   foreach my $castlehr (list_my_castles ()) {
 
       local_update_castle ($castlehr);
       return if $dt < (get_utc_time () - 2);
@@ -927,6 +927,90 @@ sub gen_address {
    return ('', "Bad template" ) if $template !~ /^http:(\d+)\.(\d+)\.(\d+)\.(\d+):(\d+)$/;
 
    return (join ('', 'http://', (split (':', $template))[1], ':', (split (':', $template))[2]), '');
+}
+
+sub sync_castles {
+
+   my $points = get_points ();
+
+   my $ua = LWP::UserAgent->new;
+   $ua->timeout (4);
+
+   mkdir (catfile (get_decline_dir (), 'tmp'));
+
+   foreach my $p (keys %{$points}) {
+
+      next if $p eq get_my_address ();
+
+      my ($url, $errstr) = gen_address ($p);
+
+      unless ($url) {
+
+         warn "Point $p error $errstr\n";
+         next;
+      }
+
+      my $response = $ua->mirror ("$url/kingdom.json", catfile (get_decline_dir (), 'tmp', "$p.kingdom.json"));
+
+      if ($response->code !~ /^(2|3)/) {
+
+         warn "Error $url/kingdom.json : " . $response->code . "\n";
+         next;
+      }
+
+      next if (Decline::sha1_hex_file (catfile (get_decline_dir (), 'tmp', "$p.kingdom.json")) eq
+               Decline::sha1_hex_file (catfile (get_decline_dir (), 'data', "kingdom.json")));
+
+      my $old_struct = Decline::load_json (catfile (get_decline_dir (), 'data', "kingdom.json"));
+      my $new_struct = Decline::load_json (catfile (get_decline_dir (), 'tmp', "$p.kingdom.json"));
+
+      die "Bad keys.json\n" if ref ($new_struct) ne 'HASH';
+
+      # TODO sort by date
+      foreach my $k (keys %{$new_struct}) {
+
+         next if exists $old_struct->{$k};
+
+         print "New castle $k\n";
+         my $json_file = catfile (get_decline_dir (), 'tmp', '000.json');
+         my $sig_file = catfile (get_decline_dir (), 'tmp', '000.sig');
+         $response = $ua->mirror ("$url/$k/0000/000.json", $json_file);
+         $response = $ua->mirror ("$url/$k/0000/000.sig", $sig_file);
+         my $rc = Decline::gpg_verify_signature ($json_file, $sig_file);
+
+         if ($rc) {
+
+            warn "failed verification\n";
+            next;
+         }
+
+         my $data = Decline::load_json ($json_file);
+         my $struct = {
+            key    => $data->{key},
+            stepdt => $data->{stepdt},
+            id     => $data->{id},
+            x      => $data->{x},
+            y      => $data->{y},
+            mapid  => $data->{mapid},
+            dt     => $data->{dt}
+         };
+         my ($code, $errstr) = Decline::unauthorised_create_castle ($struct);
+         if ($code) {
+
+            warn "unauthorised_create_castle $code : $errstr\n";
+            next;
+         }
+         my $dest = catfile (get_decline_dir (), 'data', $k, '0000', '000.sig');
+         if (! copy ($sig_file, $dest)) {
+
+            warn "Copy $sig_file to $dest failed: $!\n";
+         }
+         # TODO check
+         # /tmp/000.json == data/0000/000.json
+         # sha1 in /tmp/000.json == sha1 data/CASTLE/state.json
+         # copy /tmp/000.sig data/0000/000.json
+      }
+   }
 }
 
 sub sync_keys {
@@ -996,6 +1080,7 @@ sub sync_keys {
 
 sub remote_updates {
    sync_keys ();
+   sync_castles ();
 }
 
 sub get_updates {
