@@ -291,12 +291,11 @@ sub get_key_id {
 
 sub get_my_port {
 
-   my $key = get_key_id ();
-   my $result = get_keys ();
+   my $addr = get_my_address ();
 
-   return 0 if ! defined $result || ! $key;
+   my $port = (split (':', $addr))[2];
 
-   return ($result->{$key}{port} || 0);
+   return ($port || 0);
 }
 
 sub create_new_key {
@@ -632,6 +631,7 @@ sub create_new_castle {
    });
 
    gpg_create_signature (@data) if ! $rc;
+   return $castle_id;
 }
 
 # TODO signature
@@ -931,37 +931,41 @@ sub gen_address {
 
 sub sync_keys {
 
-   my $keys = get_keys ();
-   use Data::Dumper;
+   my $points = get_points ();
 
    my $ua = LWP::UserAgent->new;
    $ua->timeout (4);
 
-   foreach my $k (keys %{$keys}) {
+   mkdir (catfile (get_decline_dir (), 'data', 'remote'));
 
-      next if $k eq get_key_id ();
-      my ($url, $errstr) = get_address ($keys->{$k}{address});
+   foreach my $p (keys %{$points}) {
+
+      next if $p eq get_my_address ();
+
+      my ($url, $errstr) = gen_address ($p);
 
       unless ($url) {
 
-         warn "Key $k error $errstr\n";
+         warn "Point $p error $errstr\n";
          next;
       }
-      my $response = $ua->mirror ($url . '/keys.json', catfile (get_decline_dir (), 'data', "$k.keys.json"));
+      my $response = $ua->mirror ($url . '/keys.json', catfile (get_decline_dir (), 'data', 'remote', "$p.keys.json"));
 
       if ($response->code !~ /^(2|3)/) {
 
-         warn "Error $url/keys.json : $response->code\n");
+         warn "Error $url/keys.json : " . $response->code . "\n";
          next;
       }
 
-      next if (Decline::sha1_hex_file (catfile (get_decline_dir (), 'data', "$k.keys.json")) eq
+      next if (Decline::sha1_hex_file (catfile (get_decline_dir (), 'data', 'remote', "$p.keys.json")) eq
                Decline::sha1_hex_file (catfile (get_decline_dir (), 'data', 'keys.json')));
 
-      my $old_struct = Decline::load_json (catfile (get_decline_dir (), 'data', 'keys.json'));
-      my $new_struct = Decline::load_json (catfile (get_decline_dir (), 'data', "$k.keys.json"));
+      warn "$p exchange keys.json\n";
 
-      die "Bad keys.json\n" if ref ($old_struct) ne 'HASH';
+      my $old_struct = Decline::load_json (catfile (get_decline_dir (), 'data', 'keys.json'));
+      my $new_struct = Decline::load_json (catfile (get_decline_dir (), 'data', 'remote', "$p.keys.json"));
+
+      die "Bad keys.json\n" if ref ($new_struct) ne 'HASH';
 
       foreach my $k (keys %{$new_struct}) {
 
@@ -971,10 +975,20 @@ sub sync_keys {
          $response = $ua->mirror ( $url . "/$k.asc", catfile (get_decline_dir (), 'data', "$k.asc"));
          if ($response->code =~ /^(2|3)/) {
 
-            Decline::gpg_add_key (catfile (get_decline_dir (), 'data', "$k.asc"), $k);
-            Decline::init_keys_json ();
-            Decline::set_key_attribute ($k, 'address', $new_struct->{$k}{address}) if exists $new_struct->{$k}{address};
-            # TODO verify key (email)
+            my ($rc, $err) = gen_address ($new_struct->{$k}{address});
+            if ($rc) {
+
+               Decline::gpg_add_key (catfile (get_decline_dir (), 'data', "$k.asc"), $k);
+               Decline::init_keys_json ();
+               Decline::set_key_attribute ($k, 'address', $new_struct->{$k}{address});
+               Decline::set_point_attribute ($new_struct->{$k}{address}, 'self', 0);
+               # TODO verify key (email)
+            }
+            else {
+
+               warn "Bad address in $k.keys.json : $err\n";
+               next;
+            }
          }
       }
    }

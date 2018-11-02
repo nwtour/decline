@@ -107,6 +107,7 @@ any '/public/:select/:castle' => sub {
 any '/public/update' => sub {
    my $c   = shift;
    if (Decline::get_updates ()) {
+
       return $c->render (text => scalar (localtime));
    }
    $c->render (text => '');
@@ -138,15 +139,7 @@ any '/global/:select' => sub {
       }
    }
 
-   if (! $address ) {
-
-      if ($c->param ('ip') && $c->param ('ip') =~ /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/ && $c->param ('port') && $c->param ('port') =~ /^(\d+)$/) {
-
-         Decline::set_point_attribute (join (':', 'http', $c->param ('ip'), $c->param ('port')), 'self', 1);
-         return $c->redirect_to ("/global/sync");
-      }
-   }
-   elsif (! $key) {
+   if (! $key) {
 
       if ($c->param ('gpg_path') && -e $c->param ('gpg_path')) {
 
@@ -181,6 +174,15 @@ any '/global/:select' => sub {
       $params->{files} = Decline::update_program_files (0,$c->param ('update'));
    }
    elsif ($select eq 'sync') {
+
+      if ($c->param ('ip') && $c->param ('ip') =~ /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/
+             &&
+          $c->param ('port') && $c->param ('port') =~ /^(\d+)$/) {
+
+         Decline::set_point_attribute (join (':', 'http', $c->param ('ip'), $c->param ('port')), 'self', ($c->param ('self') ? 1 : 0));
+         return $c->redirect_to ("/global/sync");
+      }
+
 
       $params->{keys}    = Decline::get_keys ();
       $params->{points}  = Decline::get_points ();

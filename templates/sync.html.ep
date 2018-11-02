@@ -5,12 +5,15 @@
 
 <table width="50%" border="1">
 
-%  if (!$params->{address}) {
+%  my $s = ($params->{address} ? 0 : 1);
+
+%  if ($key || $s) {
 
       <tr><td colspan="5">
          <form method="GET" action="/global/sync/">
             IP-адрес <input type="text" name="ip"><br>
             Порт <input type="text" name="port"><br>
+            <input type="hidden" name="self" value="<%= $s %>">
             <input type="submit" value="Отправить">
          </form>
       </td></tr>
@@ -30,6 +33,9 @@
                <input type="submit" value="Отправить">
             </form>
 %        }
+%  }
+%  else {
+
 %  }
    <tr><td>Ключ</td><td>Тип</td><td>Протокол</td><td>Адрес</td><td>Порт</td></tr>
 %  foreach my $p (keys %{$params->{points}}) {
