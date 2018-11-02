@@ -125,27 +125,44 @@ any '/svg/kingdom/#name' => sub {
 
 any '/global/:select' => sub {
    my $c = shift;
-   my $select = $c->param('select');
+   my $select = $c->param ('select');
    my $key = Decline::get_key_id ();
    my $params = {};
-   if (! $key && $select ne 'sync') {
+   my $address = Decline::get_my_address ();
 
-      return $c->render (text => "Unautorized");
+   if ($select ne 'sync') {
+
+      if (! $key || ! $address) {
+
+         return $c->redirect_to ("/global/sync");
+      }
    }
-   if (! $key) {
 
-      if ($c->param('gpg_path') && -e $c->param('gpg_path')) {
-         $params->{gpg_path} = $c->param('gpg_path');
+   if (! $address ) {
+
+      if ($c->param ('ip') && $c->param ('ip') =~ /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/ && $c->param ('port') && $c->param ('port') =~ /^(\d+)$/) {
+
+         Decline::set_point_attribute (join (':', 'http', $c->param ('ip'), $c->param ('port')), 'self', 1);
+         return $c->redirect_to ("/global/sync");
+      }
+   }
+   elsif (! $key) {
+
+      if ($c->param ('gpg_path') && -e $c->param ('gpg_path')) {
+
+         $params->{gpg_path} = $c->param ('gpg_path');
       }
       else {
+
          $params->{gpg_path} = Decline::get_gpg_path ();
       }
 
-      if ($c->param('yes')) {
+      if ($c->param ('yes')) {
 
          Decline::create_new_key ($params->{gpg_path});
          $key = Decline::get_key_id ();
          Decline::set_gpg_path ($params->{gpg_path}) if $key;
+         return $c->redirect_to ("/global/sync");
       }
       else {
 
@@ -165,13 +182,9 @@ any '/global/:select' => sub {
    }
    elsif ($select eq 'sync') {
 
-      if ($c->param ('ip') && $c->param ('ip') =~ /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/ && $c->param ('port') && $c->param ('port') =~ /^(\d+)$/) {
-
-         Decline::set_key_attribute ($key, 'ip', $c->param ('ip'));
-         Decline::set_key_attribute ($key, 'port', $c->param ('port'));
-         return $c->redirect_to ("/global/sync");
-      }
-      $params->{keys} = Decline::get_keys ();
+      $params->{keys}    = Decline::get_keys ();
+      $params->{points}  = Decline::get_points ();
+      $params->{address} = $address;
    }
 
 

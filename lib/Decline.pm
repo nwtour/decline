@@ -6,7 +6,7 @@ use utf8;
 use File::Spec::Functions qw(catfile);
 use DateTime;
 use Mojo::JSON qw(decode_json encode_json);
-use Mojo::UserAgent;
+use LWP::UserAgent;
 use Time::HiRes qw(gettimeofday);
 use Digest::SHA  qw(sha1_hex);
 use SVG;
@@ -220,6 +220,38 @@ sub set_key_attribute {
    save_keys_json ($result);
 }
 
+sub get_points {
+   return load_json (catfile (get_decline_dir (), 'data', 'points.json'));
+}
+
+sub set_point_attribute {
+   my ($point, $param, $value) = @_;
+
+   mkdir (catfile (get_decline_dir (), 'data'));
+
+   my $network = get_points ();
+
+   $network->{$point}{$param} = $value;
+
+   my ($json, undef) = get_json_and_sha1 ($network);
+
+   if (open (FILE, '>', catfile (get_decline_dir (), 'data', 'points.json'))) {
+
+      print FILE $json;
+      close (FILE);
+   }
+}
+
+sub get_my_address {
+   my $hashref = get_points ();
+
+   foreach my $point (keys %{$hashref}) {
+
+      return $point if $hashref->{$point}{self};
+   }
+   return undef;
+}
+
 sub init_keys_json {
 
    my $result = {};
@@ -230,7 +262,11 @@ sub init_keys_json {
       while (my $str = <PIPE>) {
 
          my @list = split (/:/, $str);
-         $result->{ $list[4] }{type} = $list[1] if $list[0] eq 'pub'
+         if ($list[0] eq 'pub') {
+
+            $result->{ $list[4] }{type} = $list[1];
+            $result->{ $list[4] }{address} = get_my_address () if $list[1] eq 'u';
+         }
       }
       close (PIPE);
    }
@@ -380,6 +416,11 @@ sub part_json {
 
 sub load_json {
    my $path = shift;
+   if (! -e $path) {
+
+      #warn "load_json: Empty file $path\n";
+      return {};
+   }
    my $json = read_file_slurp ($path);
    my $array_ref = decode_json ($json);
    return part_json ($array_ref);
@@ -600,7 +641,7 @@ sub buy_army {
    my $castle_ref = load_castle ($castle_id);
    return "Invalid castle id $castle_id" unless $castle_ref->{mapid};
 
-   foreach my $arm ( keys %{ $army } ) {
+   foreach my $arm (keys %{$army}) {
 
       if ($arm eq $army_name) {
 
@@ -751,24 +792,6 @@ sub picture_by_coord {
    return $index->{$mapid}{$x}{$y};
 }
 
-sub get_network_index {
-   my $network = {};
-   my $data = read_file_slurp (catfile (get_decline_dir (), 'index', 'network.json'));
-
-   $network = decode_json ($data) if $data;
-   return $network;
-}
-
-sub write_network_index {
-   my $network = shift;
-
-   if (open (FILE, '>', catfile (get_decline_dir (), 'index', 'network.json'))) {
-
-      print FILE encode_json ($network);
-      close (FILE);
-   }
-}
-
 # население плюс 2 процента каждые три часа
 # деньги 4 процента от населения
 sub increase_population {
@@ -896,24 +919,75 @@ sub local_updates {
    }
 }
 
+sub gen_address {
+   my $template = shift;
+
+   return ('', "Empty address") unless $template;
+
+   return ('', "Bad template" ) if $template !~ /^http:(\d+)\.(\d+)\.(\d+)\.(\d+):(\d+)$/;
+
+   return (join ('', 'http://', (split (':', $template))[1], ':', (split (':', $template))[2]), '');
+}
+
+sub sync_keys {
+
+   my $keys = get_keys ();
+   use Data::Dumper;
+
+   my $ua = LWP::UserAgent->new;
+   $ua->timeout (4);
+
+   foreach my $k (keys %{$keys}) {
+
+      next if $k eq get_key_id ();
+      my ($url, $errstr) = get_address ($keys->{$k}{address});
+
+      unless ($url) {
+
+         warn "Key $k error $errstr\n";
+         next;
+      }
+      my $response = $ua->mirror ($url . '/keys.json', catfile (get_decline_dir (), 'data', "$k.keys.json"));
+
+      if ($response->code !~ /^(2|3)/) {
+
+         warn "Error $url/keys.json : $response->code\n");
+         next;
+      }
+
+      next if (Decline::sha1_hex_file (catfile (get_decline_dir (), 'data', "$k.keys.json")) eq
+               Decline::sha1_hex_file (catfile (get_decline_dir (), 'data', 'keys.json')));
+
+      my $old_struct = Decline::load_json (catfile (get_decline_dir (), 'data', 'keys.json'));
+      my $new_struct = Decline::load_json (catfile (get_decline_dir (), 'data', "$k.keys.json"));
+
+      die "Bad keys.json\n" if ref ($old_struct) ne 'HASH';
+
+      foreach my $k (keys %{$new_struct}) {
+
+         next if exists $old_struct->{$k};
+
+         warn "New key $k\n";
+         $response = $ua->mirror ( $url . "/$k.asc", catfile (get_decline_dir (), 'data', "$k.asc"));
+         if ($response->code =~ /^(2|3)/) {
+
+            Decline::gpg_add_key (catfile (get_decline_dir (), 'data', "$k.asc"), $k);
+            Decline::init_keys_json ();
+            Decline::set_key_attribute ($k, 'address', $new_struct->{$k}{address}) if exists $new_struct->{$k}{address};
+            # TODO verify key (email)
+         }
+      }
+   }
+}
+
+sub remote_updates {
+   sync_keys ();
+}
+
 sub get_updates {
 
-   local_updates ();
-   return 0;
-
-   my $network = get_network_index ();
-   my $ua  = Mojo::UserAgent->new;
-   $ua->max_redirects(0)->connect_timeout(3)->request_timeout(5)->inactivity_timeout(5);
-   $network->{'http://78.78.78.78:8888'}{check} = get_utc_time ();
-   write_network_index ($network);
-   my $res = $ua->get('http://78.78.78.78:8888/ping');
-   if ($res->res->code == 200) {
-
-      $network->{'http://78.78.78.78:8888'}{success} = get_utc_time ();
-      write_network_index ($network);
-      return 1;
-   }
-   # https://metacpan.org/pod/Mojo::UserAgent
+   local_updates  ();
+   remote_updates ();
    return 0;
 }
 

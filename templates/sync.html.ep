@@ -3,57 +3,59 @@
 
 <br><br><br>
 
-% if ($key && exists $params->{keys}) {
+<table width="50%" border="1">
 
-     <table width="50%" border="1">
+%  if (!$params->{address}) {
 
-%       if (!$params->{keys}{$key}{ip} || !$params->{keys}{$key}{port}) {
+      <tr><td colspan="5">
+         <form method="GET" action="/global/sync/">
+            IP-адрес <input type="text" name="ip"><br>
+            Порт <input type="text" name="port"><br>
+            <input type="submit" value="Отправить">
+         </form>
+      </td></tr>
+%  }
+%  elsif (! $key ) {
 
-           <tr><td colspan="5">
-              <form method="GET" action="/global/sync/">
-                 IP-адрес <input type="text" name="ip"><br>
-                 Порт <input type="text" name="port"><br>
-                 <input type="submit" value="Отправить">
-              </form>
-           </td></tr>
-%       }
-        <tr><td>Ключ</td><td>Тип</td><td>Протокол</td><td>Адрес</td><td>Порт</td></tr>
-%    foreach my $k (keys %{$params->{keys}}) {
+      <tr><td colspan="5">
+         Создание ключа<br>
+%        if ($params->{gpg_path}) {
 
-%       my $type = $params->{keys}{$k}{type};
-        <tr>
-           <td>
-              <%= $k %>
-           </td>
-           <td>
-%==           ($type eq 'u' ? 'Свой' : 'Импортированный')
-           <td>
-              http://
-           </td>
-           <td>
-%==           (exists $params->{keys}{$k}{ip} ? $params->{keys}{$k}{ip} : '')
-           </td>
-           <td>
-%==           (exists $params->{keys}{$k}{port} ? $params->{keys}{$k}{port} : '')
-           </td>
-        </tr>
-%    }
-     </table>
+            <a href="/global/sync/?gpg_path=<%= $params->{gpg_path} %>&yes=1">Создать новый ключ (займет некоторое время)</a><br>
+%        }
+%        else {
+
+            <form method="GET" action="/global/sync/">
+               <input type="text" name="gpg_path"><br>
+               <input type="submit" value="Отправить">
+            </form>
+%        }
+%  }
+   <tr><td>Ключ</td><td>Тип</td><td>Протокол</td><td>Адрес</td><td>Порт</td></tr>
+%  foreach my $p (keys %{$params->{points}}) {
+
+      <tr>
+         <td>
+%           foreach my $k (keys %{$params->{keys}}) {
+
+%              if (exists $params->{keys}{$k}{address} && $params->{keys}{$k}{address} eq $p) {
+
+                  <%= $k %>
+%              }
+%           }
+         </td>
+         <td>
+%==         ($p eq $params->{address} ? 'Свой' : 'Импортированный')
+         <td>
+            http://
+         </td>
+         <td>
+%==         ((split (':', $p))[1])
+         </td>
+         <td>
+%==         ((split (':', $p))[2])
+         </td>
+      </tr>
 % }
-
-% unless ($key) {
-
-     Создание ключа<br>
-%    if ($params->{gpg_path}) {
-
-        <a href="/global/sync/?gpg_path=<%= $params->{gpg_path} %>&yes=1">Создать новый ключ (займет некоторое время)</a><br>
-%    }
-%    else {
-        <form method="GET" action="/global/sync/">
-        <input type="text" name="gpg_path"><br>
-        <input type="submit" value="Отправить">
-        </form>
-%    }
-% }
-
+  </table>
 % end
