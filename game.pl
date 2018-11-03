@@ -120,12 +120,12 @@ any '/public/update' => sub {
    $c->render (text => '');
 };
 
-any '/svg/kingdom/#name' => sub {
+any '/svg/kingdom/:mapid/#name' => sub {
    my $c   = shift;
 
    if (my $key = Decline::get_key_id ()) {
 
-      $c->stash (svg => Decline::generate_svg ($c->param ('name'), $key));
+      $c->stash (svg => Decline::generate_svg ($c->param ('mapid'), $key));
       return $c->render (template => 'kingdom_svg', format => 'svg');
    }
    $c->render (text => 'Unautorized');

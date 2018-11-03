@@ -9,7 +9,6 @@ use Mojo::JSON qw(decode_json encode_json);
 use LWP::UserAgent;
 use Time::HiRes qw(gettimeofday);
 use Digest::SHA  qw(sha1_hex);
-use SVG;
 use LWP::Simple qw(mirror);
 use LWP::Protocol::https;
 use Archive::Zip;
@@ -20,7 +19,7 @@ use File::Copy qw(copy);
 our $decline_dir;
 our $version = 1;
 
-my $index = {};
+my $geo_index = {};
 
 our $army = {
    "pikeman" => {
@@ -37,6 +36,25 @@ sub get_decline_dir {
    die "\$decline_dir undefined\n" unless $decline_dir;
    die "Bad decline_dir\n" unless -d $decline_dir;
    return $decline_dir;
+}
+
+sub create_directory_tree {
+   my ($castle_id, $subdir) = @_;
+
+   my $d = get_decline_dir ();
+
+   mkdir (catfile ($d, 'data'));
+   mkdir (catfile (get_decline_dir (), 'data', 'remote'));
+   mkdir (catfile ($d, 'key'));
+
+   if ($castle_id) {
+
+      mkdir (catfile ($d, 'data', $castle_id));
+      if ($subdir) {
+
+         mkdir (catfile ($d, 'data', $castle_id, $subdir));
+      }
+   }
 }
 
 sub read_file_slurp {
@@ -200,15 +218,52 @@ sub gen_gpg_batch_file {
 
 sub keys_json_file {
 
-   mkdir catfile (get_decline_dir (), 'data');
+   create_directory_tree ();
 
    return catfile (get_decline_dir (), 'data', 'keys.json');
+}
+
+sub clone_data {
+   my $ref = shift;
+   my $VAR1;
+
+   my $new_ref = eval (Data::Dumper::Dumper($ref));
+   return $new_ref;
+}
+
+sub make_sorted_data {
+   my $hashref = shift;
+
+   my @sorted_keys = sort { $a cmp $b } (keys %{$hashref});
+   my $i = 0;
+   my $array_ref = [];
+   while (exists $sorted_keys[$i]) {
+
+      my $hr = $hashref->{ $sorted_keys[$i] };
+      if (ref ($hr) eq 'HASH') {
+
+         $hr = clone_data ($hr);
+         $hr = make_sorted_data ($hr);
+      }
+
+      my @int_array = ($sorted_keys[$i]);
+      push @int_array, $hr;
+      push @{ $array_ref }, \@int_array;
+      $i++;
+   }
+   return $array_ref;
+}
+
+sub get_json {
+   my $hashref = shift;
+
+   return encode_json (make_sorted_data ($hashref));
 }
 
 sub save_keys_json {
    my $result = shift;
 
-   my ($json, undef) = get_json_and_sha1 ($result);
+   my $json = get_json ($result);
    if (open (FILE, '>', keys_json_file ())) {
 
       print FILE $json;
@@ -233,13 +288,13 @@ sub get_points {
 sub set_point_attribute {
    my ($point, $param, $value) = @_;
 
-   mkdir (catfile (get_decline_dir (), 'data'));
+   create_directory_tree ();
 
    my $network = get_points ();
 
    $network->{$point}{$param} = $value;
 
-   my ($json, undef) = get_json_and_sha1 ($network);
+   my $json = get_json ($network);
 
    if (open (FILE, '>', catfile (get_decline_dir (), 'data', 'points.json'))) {
 
@@ -308,7 +363,6 @@ sub create_new_key {
    my $gpg_path = shift;
 
    my $homedir = catfile (get_decline_dir (), 'key');
-   mkdir $homedir;
 
    my @list = (
       $gpg_path,
@@ -373,33 +427,10 @@ sub get_utc_time {
    return int (DateTime->from_epoch (epoch => time)->set_time_zone ("UTC")->epoch ());
 }
 
-sub make_sorted_data {
-   my $hashref = shift;
-
-   my @sorted_keys = sort { $a cmp $b } (keys %{$hashref});
-   my $i = 0;
-   my $array_ref = [];
-   while (exists $sorted_keys[$i]) {
-
-      my $hr = $hashref->{ $sorted_keys[$i] };
-      if (ref ($hr) eq 'HASH') {
-
-         $hr = clone_data ($hr);
-         $hr = make_sorted_data ($hr);
-      }
-
-      my @int_array = ($sorted_keys[$i]);
-      push @int_array, $hr;
-      push @{ $array_ref }, \@int_array;
-      $i++;
-   }
-   return $array_ref;
-}
-
 sub get_json_and_sha1 {
    my $hashref = shift;
 
-   my $json = encode_json (make_sorted_data ($hashref));
+   my $json = get_json ($hashref);
    return ($json, sha1_hex ($json));
 }
 
@@ -459,13 +490,13 @@ sub write_op {
    }
 
    my $full_dir = catfile (get_decline_dir (), 'data', $castle_id, $sub_dir);
-   mkdir $full_dir if ! -d $full_dir;
+   create_directory_tree ($castle_id, $sub_dir);
 
    my $path_to_file = catfile ($full_dir, $file . '.json');
 
    return (1, "exist operation file $path_to_file") if -e $path_to_file;
 
-   my ($json, undef) = get_json_and_sha1 ($hashref);
+   my $json = get_json ($hashref);
    if (open (FILE, '>', $path_to_file)) {
 
       print FILE $json;
@@ -484,8 +515,8 @@ sub write_castle_state {
       print FILE $json;
       close (FILE);
    }
-   undef ($index);
-   $index = {};
+   undef ($geo_index);
+   $geo_index = {};
 }
 
 sub write_kingdom_state {
@@ -496,7 +527,7 @@ sub write_kingdom_state {
       my (undef, $sha1) = get_json_and_sha1 ($castle);
       $result->{ $castle->{id} } = $sha1;
    }
-   my ($json, undef) = get_json_and_sha1 ($result);
+   my $json = get_json ($result);
    if (open (FILE, '>', catfile (get_decline_dir (), 'data', 'kingdom.json'))) {
 
       print FILE $json;
@@ -573,14 +604,6 @@ sub restrict_new_castle {
    return ($max_create_dt + (24*60*60) - get_utc_time ());
 }
 
-sub clone_data {
-   my $ref = shift;
-   my $VAR1;
-
-   my $new_ref = eval (Data::Dumper::Dumper($ref));
-   return $new_ref;
-}
-
 sub unauthorised_create_castle {
    my $struct = shift;
 
@@ -598,7 +621,7 @@ sub unauthorised_create_castle {
    }
 
    my $castle_dir = catfile (get_decline_dir (), 'data', $castle_id);
-   mkdir $castle_dir;
+   create_directory_tree ($castle_id);
    my $data = {
       key        => $key,
       dt         => $dt,
@@ -616,7 +639,7 @@ sub unauthorised_create_castle {
    my $op_data = clone_data ($data);
    my ($json, $sha1) = get_json_and_sha1 ($data);
    my (undef, $old_sha1) = get_json_and_sha1 ({});
-   $op_data->{op} = "create_castle";
+   $op_data->{op} = "unauthorised_create_castle";
    $op_data->{new} = $sha1;
    $op_data->{old} = $old_sha1;
    return atomic_write_data ($castle_id, $json, $op_data);
@@ -766,7 +789,7 @@ sub has_move_army2 {
 sub move_army {
    my ($castle_id, $aid, $direction) = @_;
 
-   my ($rc,$err,$naid) = has_move_army ($castle_id, $aid, $direction);
+   my ($rc, $err, $naid) = has_move_army ($castle_id, $aid, $direction);
    return $err unless $rc;
    return "Unimplemented attack" if $rc == 2;
 
@@ -776,30 +799,37 @@ sub move_army {
    return "Internal error: $@" if ! exists $clone_data->{mapid};
    $clone_data->{army}{$aid}{movement}--;
 
-   ($clone_data->{army}{$aid}{x},$clone_data->{army}{$aid}{y}) =
-      coord_for_direction ($clone_data->{army}{$aid}{x},$clone_data->{army}{$aid}{y},$direction);
+   ($clone_data->{army}{$aid}{x}, $clone_data->{army}{$aid}{y}) =
+      coord_for_direction ($clone_data->{army}{$aid}{x}, $clone_data->{army}{$aid}{y}, $direction);
 
    $clone_data->{opid} = op_stringification (++$clone_data->{opid});
-   my (undef,$old_sha1) = get_json_and_sha1 ($castle_ref);
-   my ($json,$sha1) = get_json_and_sha1 ($clone_data);
-   my ($rc, @data) = atomic_write_data ($castle_id, $json, {op => 'move', direction => $direction, dt => get_utc_time (), new => $sha1, old => $old_sha1, opid => $clone_data->{opid}});
+   my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
+   my ($json, $sha1) = get_json_and_sha1 ($clone_data);
+   my ($rc, @data) = atomic_write_data ($castle_id, $json, {
+      op        => 'unauthorised_move_army',
+      direction => $direction,
+      dt        => get_utc_time (),
+      new       => $sha1,
+      old       => $old_sha1,
+      opid      => $clone_data->{opid}
+   });
 
    return $data[0] if $rc;
    gpg_create_signature (@data);
    return 0;
 }
 
-sub load_index {
+sub load_geo_index {
 
    foreach my $castlehr (list_castles ()) {
 
       foreach my $aid (keys %{$castlehr->{army}}) {
 
-         $index->{$castlehr->{mapid}}{$castlehr->{army}{$aid}{x}}{$castlehr->{army}{$aid}{y}}
+         $geo_index->{ $castlehr->{mapid} }{ $castlehr->{army}{$aid}{x} }{ $castlehr->{army}{$aid}{y} }
             = [$castlehr->{army}{$aid}{name}, $castlehr->{id}, $aid];
       }
 
-      $index->{$castlehr->{mapid}}{$castlehr->{x}}{$castlehr->{y}}
+      $geo_index->{ $castlehr->{mapid} }{ $castlehr->{x} }{ $castlehr->{y} }
          = ["tower1", $castlehr->{id}];
    }
 }
@@ -807,9 +837,9 @@ sub load_index {
 sub picture_by_coord {
    my ($mapid, $x, $y) = @_;
 
-   if (! exists $index->{$mapid}) {
+   if (! exists $geo_index->{$mapid}) {
 
-      load_index ();
+      load_geo_index ();
    }
 
    return "0" if $x < 0;
@@ -818,26 +848,23 @@ sub picture_by_coord {
    return "0" if $x > ( $mapid * 100);
    return "0" if $y > ( $mapid * 100);
 
-   return "5" if ! exists $index->{$mapid}{$x};
-   return "5" if ! exists $index->{$mapid}{$x}{$y};
+   return "5" if ! exists $geo_index->{$mapid}{$x};
+   return "5" if ! exists $geo_index->{$mapid}{$x}{$y};
 
-   return $index->{$mapid}{$x}{$y};
+   return $geo_index->{$mapid}{$x}{$y};
 }
 
 # население плюс 2 процента каждые три часа
 # деньги 4 процента от населения
 sub increase_population {
-   my ($castle_ref,$dt) = @_;
+   my ($castle_ref, $dt) = @_;
 
    my $population = $castle_ref->{population};
    my $gold = ($population / 3) / 8;
-   if ($gold =~ /(\d+)\.(\d{2})/) {
-
-      $gold = $1 . '.' . $2;
-   }
+   $gold = sprintf ("%.2f", $gold);
 
    $population = int ($population / 50);
-   $population += 1 unless $population;
+   $population = 1 unless $population;
 
    my $clone_data = clone_data ($castle_ref);
    $clone_data->{laststep} = $dt;
@@ -847,7 +874,7 @@ sub increase_population {
    # TODO army tarif
    # TODO obrok
 
-   $clone_data->{gold} += $gold;
+   $clone_data->{gold}       += $gold;
    $clone_data->{population} += $population;
 
    $clone_data->{opid} = op_stringification (++$clone_data->{opid});
@@ -855,7 +882,7 @@ sub increase_population {
    my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
    my ($json, $sha1) = get_json_and_sha1 ($clone_data);
    my $op = {
-      op                  => 'increase_population',
+      op                  => 'unauthorised_increase_population',
       gold_increase       => $gold,
       population_increase => $population,
       dt                  => $dt,
@@ -897,51 +924,69 @@ sub increase_movement {
    $clone_data->{opid} = op_stringification (++$clone_data->{opid});
    my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
    my ($json, $sha1) = get_json_and_sha1 ($clone_data);
-   my ($rc, @data) = atomic_write_data ($castle_ref->{id}, $json, {op => 'increase_movement', data => $ops, dt => $dt, new => $sha1, old => $old_sha1, opid => $clone_data->{opid}});
+   my ($rc, @data) = atomic_write_data ($castle_ref->{id}, $json, {
+      op   => 'unauthorised_increase_movement',
+      data => $ops,
+      dt   => $dt,
+      new  => $sha1,
+      old  => $old_sha1,
+      opid => $clone_data->{opid}
+   });
 
    warn $data[0] . "\n" if $rc;
    gpg_create_signature (@data) if ! $rc;
 }
 
+sub increase_keepalive {
+   my ($castle_ref, $dt) = @_;
 
+   # TODO keepalive
+}
 sub local_update_castle {
    my $castlehr = shift;
 
    my $dt = get_utc_time ();
-   if ($castlehr->{laststep} < ($dt - (60*60))) {
+   return 0 if $castlehr->{laststep} > ($dt - (30*60));
 
-      my $basedt = ($castlehr->{laststep} > $castlehr->{dt} ? $castlehr->{laststep} : $castlehr->{dt});
+   my $basedt = ($castlehr->{laststep} > $castlehr->{dt} ? $castlehr->{laststep} : $castlehr->{dt});
 
-      die "Error laststep > current date\n" if $basedt > $dt;
+   die "Error laststep > current date\n" if $basedt > $dt;
 
-      $basedt += 1;
+   $basedt += 1;
 
-      while ($basedt < $dt) {
+   while ($basedt < $dt) {
 
-         my $datetime = DateTime->from_epoch (epoch => $basedt)->set_time_zone ("UTC");
-         if ($datetime->second() != 0) {
+      my $datetime = DateTime->from_epoch (epoch => $basedt)->set_time_zone ("UTC");
+      if ($datetime->second() != 0) {
 
-            $basedt++;
+         $basedt++;
+         next;
+      }
+      if ($datetime->minute() == 0 || $datetime->minute() == 30) {
+
+         increase_keepalive ($castlehr, $basedt);
+         $castlehr = load_castle ($castlehr->{id});
+         if ($datetime->minute() == 30) {
+
+            $basedt += (30*60);
             next;
          }
-         if ($datetime->minute() == 0) {
 
-            if ($datetime->hour_1() == $castlehr->{stepdt}) {
+         if ($datetime->hour_1() == $castlehr->{stepdt}) {
 
-               increase_movement ($castlehr, $basedt);
-               $castlehr = load_castle ($castlehr->{id});
-            }
-            if (! ($datetime->hour_1() % 3)) {
-
-               increase_population ($castlehr, $basedt);
-               $castlehr = load_castle ($castlehr->{id});
-            }
-            $basedt += (60*60);
+            increase_movement ($castlehr, $basedt);
+            $castlehr = load_castle ($castlehr->{id});
          }
-         else {
+         if (! ($datetime->hour_1() % 3)) {
 
-            $basedt += 60;
+            increase_population ($castlehr, $basedt);
+            $castlehr = load_castle ($castlehr->{id});
          }
+         $basedt += (30*60);
+      }
+      else {
+
+         $basedt += 60;
       }
    }
 }
@@ -1067,8 +1112,6 @@ sub sync_castles {
    my $ua = LWP::UserAgent->new;
    $ua->timeout (4);
 
-   mkdir (catfile (get_decline_dir (), 'tmp'));
-
    foreach my $p (keys %{$points}) {
 
       next if $p eq get_my_address ();
@@ -1116,7 +1159,7 @@ sub sync_keys {
    my $ua = LWP::UserAgent->new;
    $ua->timeout (4);
 
-   mkdir (catfile (get_decline_dir (), 'data', 'remote'));
+   create_directory_tree ();
 
    foreach my $p (keys %{$points}) {
 
@@ -1200,21 +1243,11 @@ sub random_color {
 }
 
 sub generate_svg {
-   my ($file,$key) = @_;
-
-   my $svg = SVG->new (width => 1000, height => 1000);
-
-   if ($file !~ /(\d+)\.svg/) {
-
-      return $svg;
-   }
-   my $mapid = $1;
+   my ($mapid, $key) = @_;
 
    my $multi = (1000 / ($mapid * 100));
 
-   $svg->rectangle (x => 0, y => 0, width => 1000, height => 1000, id => 'rect', style => {stroke => 'black', 'fill-opacity' => 0});
-
-   my %seen;
+   my (%seen, $result) = ((), []);
 
    foreach my $castle_ref (list_castles ()) {
 
@@ -1236,22 +1269,26 @@ sub generate_svg {
             last;
          }
       }
-     
-      my ($cid, $x, $y) = ($castle_ref->{id}, $castle_ref->{x}, $castle_ref->{y});
-      my $z = $svg->group (id => "group$cid", style => {fill => $color});
-      $z->circle (cx => ($x * $multi), cy => ($y * $multi), r => (1*$multi), id => "circle$cid");
-      my $text = ($key eq $ckey ? "${x}x${y} Без названия" : "${x}x${y}");
-      $svg->text (id => "t$cid", x => (($x*$multi) + $multi), y  => ($y*$multi), style => {'font' => 'Tahoma, Geneva, sans-serif', 'font-size' => 7})->cdata ($text);
+
+      push @{ $result }, {
+         id       => $castle_ref->{id},
+         name     => $castle_ref->{x} . 'x' . $castle_ref->{y} . ($key eq $ckey ? " Без названия" : ''),
+         color    => $color,
+         radius   => (1*$multi),
+         x_offset => $multi,
+         x        => ($castle_ref->{x} * $multi),
+         y        => ($castle_ref->{y} * $multi)
+      };
    }
-   return $svg;
+   return $result;
 }
 
 sub update_program_files {
    my ($full, $sha1) = @_;
 
-   mkdir (catfile (get_decline_dir (), 'update'));
+   create_directory_tree ();
 
-   my $archive_file = catfile (get_decline_dir (), "update", "master.zip");
+   my $archive_file = catfile (get_decline_dir (), 'data', 'remote', "master.zip");
 
    my $stat = stat ($archive_file);
 

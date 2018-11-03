@@ -1,1 +1,13 @@
-%== $svg->xmlify;
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
+<svg height="1000" width="1000" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+   <rect height="1000" id="rect" style="fill-opacity: 0; stroke: black" width="1000" x="0" y="0" />
+%  foreach my $struct (@{$svg}) {
+
+   <g id="g<%= $struct->{id} %>" style="fill: <%= $struct->{color} %>">
+      <circle cx="<%= $struct->{x} %>" cy="<%= $struct->{y} %>" id="c<%= $struct->{id} %>" r="<%= $struct->{radius} %>" />
+   </g>
+   <text id="t<%= $struct->{id} %>" style="font: Tahoma, Geneva, sans-serif; font-size: 7"
+         x="<%= ($struct->{x} + $struct->{x_offset}) %>" y="<%= $struct->{y} %>"><%= $struct->{name} %></text>
+%  }
+</svg>
