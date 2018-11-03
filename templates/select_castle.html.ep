@@ -6,20 +6,22 @@
       <tr><td colspan="2">
 %        if ($params->{hour}) {
             <br>
-            <a href="/public/castle/new?hour=<%= $params->{hour} %>">Создать замок (время перехода <%= $params->{hour} %>:00)</a><br>
+            <a href="/create/castle/<%= $params->{hour} %>">Создать замок (время перехода <%= $params->{hour} %>:00)</a><br>
             <br>
-%        } elsif($params->{restrict}) {
+%        }
+%        elsif ($params->{restrict}) {
             <br>
             Создать новый замок можно через <%= int($params->{restrict} / 60) %> минут<br>
             <br>
-%        } else {
+%        }
+%        else {
             Выберите время перехода хода<br>
-%           foreach my $h ( 1 .. 12 ) {
-               <a href="/global/select_castle?hour=<%= <%= sprintf ("%02d", $h) %>"><%= sprintf ("%02d", $h) %>:00</a> 
+%           foreach my $h (1 .. 12) {
+               <a href="/global/select_castle?hour=<%= sprintf ("%02d", $h) %>"><%= sprintf ("%02d", $h) %>:00</a>
 %           }
             <br>
 %           foreach my $h ( 13 .. 24 ) {
-               <a href="/global/select_castle?hour=<%= <%= sprintf ("%02d", $h) %>"><%= sprintf ("%02d", $h) %>:00</a> 
+               <a href="/global/select_castle?hour=<%= sprintf ("%02d", $h) %>"><%= sprintf ("%02d", $h) %>:00</a>
 %           }
 %        }
       </td></tr>

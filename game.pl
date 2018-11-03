@@ -55,13 +55,26 @@ any '/static/#file' => sub {
 any '/buy/:name/:castle' => sub {
    my $c   = shift;
 
+   if (! Decline::is_my_castle (Decline::get_key_id (), $c->param ('castle'))) {
+
+      return $c->render (text => "Unauthorised");
+   }
+
+   if (my $err = Decline::buy_army ($c->param ('castle'), $c->param ('name'))) {
+
+      return $c->render (text => "Buy error: $err");
+   }
+   $c->redirect_to ("/public/army/" . $c->param ('castle'));
+};
+
+any '/create/castle/:hour' => sub {
+   my $c   = shift;
+
    if (my $key = Decline::get_key_id ()) {
 
-      if (my $err = Decline::buy_army ($c->param ('castle'), $c->param ('name'))) {
-
-         return $c->render (text => "Buy error: $err");
-      }
-      return $c->redirect_to ("/public/army/" . $c->param ('castle'));
+      my $castle = Decline::create_new_castle ($key, $c->param ('hour'));
+      return $c->render (text => "Unable create new castle") unless $castle;
+      return $c->redirect_to ("/public/castle/$castle");
    }
    $c->render (text => "Unauthorised");
 };
@@ -69,39 +82,35 @@ any '/buy/:name/:castle' => sub {
 any '/public/:select/:castle' => sub {
    my $c   = shift;
 
-   if (my $key = Decline::get_key_id ()) {
+   my $key    = Decline::get_key_id ();
+   my $castle = $c->param ('castle');
+   my $select = $c->param ('select');
 
-      my $select = $c->param ('select');
-      my $castle = $c->param ('castle');
-      my $hour   = $c->param ('hour');
-      if ($castle eq 'new') {
-         my $castle_id = Decline::create_new_castle ($key, $hour);
-         return $c->render (text => "Unable create new castle") unless $castle_id;
-         return $c->redirect_to ("/public/castle/$castle_id");
-      }
-      $c->stash (key      => $key);
-      $c->stash (castle   => Decline::load_castle ($castle));
-      $c->stash (select   => $select);
-      $c->stash (hash     => $hash);
-      $c->stash (army     => $Decline::army);
-      $c->stash (aid      => $c->param ('aid'));
-      if ($select eq 'map' && $c->param ('d')) {
+   if (! Decline::is_my_castle ($key, $castle)) {
 
-         if (my $err = Decline::move_army ($castle, $c->param ('aid'), $c->param ('d'))) {
-
-            return $c->render (text => "Move error $err");
-         }
-         return $c->redirect_to ("/public/map/$castle/?aid=" . $c->param ('aid'));
-      }
-      if (exists $hash->{$select} && $hash->{$select}{in_castle}){
-
-         return $c->render (template => $select);
-      } else {
-
-         return $c->render (text => "Unknown url /$select/");
-      }
+      return $c->render (text => "Unauthorised");
    }
-   $c->render (text => "Unauthorised");
+   elsif (! exists $hash->{$select} || ! $hash->{$select}{in_castle}) {
+
+      return $c->render (text => "Unknown url /$select/");
+   }
+
+   $c->stash (key      => $key);
+   $c->stash (castle   => Decline::load_castle ($castle));
+   $c->stash (select   => $select);
+   $c->stash (hash     => $hash);
+   $c->stash (army     => $Decline::army);
+   $c->stash (aid      => $c->param ('aid'));
+   if ($select eq 'map' && $c->param ('d')) {
+
+      if (my $err = Decline::move_army ($castle, $c->param ('aid'), $c->param ('d'))) {
+
+         return $c->render (text => "Move error $err");
+      }
+      return $c->redirect_to ("/public/map/$castle/?aid=" . $c->param ('aid'));
+   }
+
+   $c->render (template => $select);
 };
 
 any '/public/update' => sub {
@@ -182,14 +191,17 @@ any '/global/:select' => sub {
    }
    elsif ($select eq 'sync') {
 
-      if ($c->param ('ip') && $c->param ('ip') =~ /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/
-             &&
-          $c->param ('port') && $c->param ('port') =~ /^(\d+)$/) {
+      if ($c->param ('ip') && $c->param ('port')) {
 
-         Decline::set_point_attribute (join (':', 'http', $c->param ('ip'), $c->param ('port')), 'self', ($c->param ('self') ? 1 : 0));
-         return $c->redirect_to ("/global/sync");
+         my $template = join (':', 'http', $c->param ('ip'), $c->param ('port'));
+         my ($valid) = Decline::gen_address ($template);
+         if ($valid) {
+
+            Decline::set_point_attribute ($template, 'self', ($c->param ('self') ? 1 : 0));
+            return $c->redirect_to ("/global/sync");
+         }
+         return $c->render (text => "Invalid IP-address or PORT");
       }
-
 
       $params->{keys}    = Decline::get_keys ();
       $params->{points}  = Decline::get_points ();

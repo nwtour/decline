@@ -282,6 +282,7 @@ sub set_key_attribute {
 }
 
 sub get_points {
+
    return load_json (catfile (get_decline_dir (), 'data', 'points.json'));
 }
 
@@ -567,6 +568,15 @@ sub load_castle {
    return load_json ($file_path);
 }
 
+sub is_my_castle {
+   my ($key, $castle) = @_;
+
+   return 0 if ! $key || ! $castle;
+   return 0 if $key ne get_key_id ();
+   return 0 if load_castle ($castle)->{key} ne $key;
+   return 1;
+}
+
 sub list_castles {
    my @list;
    foreach my $dir (glob (catfile (get_decline_dir (), 'data') . "/*")) {
@@ -739,14 +749,14 @@ sub buy_army {
 }
 
 sub coord_for_direction {
-   my ($x,$y,$direction) = @_;
+   my ($x, $y, $direction) = @_;
 
    $y++ if $direction =~ /s/;
    $y-- if $direction =~ /n/;
    $x-- if $direction =~ /w/;
    $x++ if $direction =~ /e/;
 
-   return ($x,$y);
+   return ($x, $y);
 }
 
 # 0 нельзя ходить 1 можно 2 можно аттаковать
@@ -781,37 +791,52 @@ sub has_move_army {
 }
 
 sub has_move_army2 {
-  my ($rc) = has_move_army (@_);
-  return $rc;
+   my ($rc) = has_move_army (@_);
+   return $rc;
 }
 
-# TODO signature
-sub move_army {
-   my ($castle_id, $aid, $direction) = @_;
+sub unauthorised_move_army {
+   my $struct = shift;
 
-   my ($rc, $err, $naid) = has_move_army ($castle_id, $aid, $direction);
-   return $err unless $rc;
-   return "Unimplemented attack" if $rc == 2;
+   my $castle_id = $struct->{id};
+   my $army_id   = $struct->{army_id};
+   my $direction = $struct->{direction};
+
+   my ($rc, $err, undef) = has_move_army ($castle_id, $army_id, $direction);
+   return (1, $err) unless $rc;
+   return (1, "Unimplemented attack") if $rc == 2;
 
    my $castle_ref = load_castle ($castle_id);
 
    my $clone_data = clone_data ($castle_ref);
-   return "Internal error: $@" if ! exists $clone_data->{mapid};
-   $clone_data->{army}{$aid}{movement}--;
+   return (1, "Internal error: $@") if ! exists $clone_data->{mapid};
+   $clone_data->{army}{$army_id}{movement}--;
 
-   ($clone_data->{army}{$aid}{x}, $clone_data->{army}{$aid}{y}) =
-      coord_for_direction ($clone_data->{army}{$aid}{x}, $clone_data->{army}{$aid}{y}, $direction);
+   ($clone_data->{army}{$army_id}{x}, $clone_data->{army}{$army_id}{y}) =
+      coord_for_direction ($clone_data->{army}{$army_id}{x}, $clone_data->{army}{$army_id}{y}, $direction);
 
    $clone_data->{opid} = op_stringification (++$clone_data->{opid});
    my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
    my ($json, $sha1) = get_json_and_sha1 ($clone_data);
-   my ($rc, @data) = atomic_write_data ($castle_id, $json, {
+   return atomic_write_data ($castle_id, $json, {
       op        => 'unauthorised_move_army',
       direction => $direction,
-      dt        => get_utc_time (),
+      dt        => $struct->{dt},
       new       => $sha1,
       old       => $old_sha1,
+      army_id   => $army_id,
       opid      => $clone_data->{opid}
+   });
+}
+
+sub move_army {
+   my ($castle_id, $aid, $direction) = @_;
+
+   my ($rc, @data) = unauthorised_move_army ({
+      id        => $castle_id,
+      dt        => get_utc_time (),
+      army_id   => $aid,
+      direction => $direction
    });
 
    return $data[0] if $rc;
@@ -942,6 +967,7 @@ sub increase_keepalive {
 
    # TODO keepalive
 }
+
 sub local_update_castle {
    my $castlehr = shift;
 
@@ -1012,6 +1038,34 @@ sub gen_address {
    return (join ('', 'http://', (split (':', $template))[1], ':', (split (':', $template))[2]), '');
 }
 
+sub unauthorised_router {
+   my ($castle_id, $op_file) = @_;
+   my $data = Decline::load_json ($op_file);
+
+   my $cmd = $data->{op};
+   $data->{id} = int ($castle_id);
+
+   my ($code, $errstr);
+
+   if ($cmd eq 'unauthorised_create_castle') {
+
+      ($code, $errstr) = Decline::unauthorised_create_castle ($data);
+   }
+   elsif ($cmd eq 'unauthorised_buy_army') {
+
+      ($code, $errstr) = Decline::unauthorised_buy_army ($data);
+   }
+   elsif ($cmd eq 'unauthorised_move_army') {
+
+      ($code, $errstr) = Decline::unauthorised_move_army ($data);
+   }
+   else {
+
+      return (1, "Unimplemented $cmd", $cmd);
+   }
+   return ($code, $errstr, $cmd, $data->{dt});
+}
+
 sub sync_castle {
    my ($type, $castle_id, $point_template) = @_;
 
@@ -1051,42 +1105,9 @@ sub sync_castle {
       return 0;
    }
 
-   my $data = Decline::load_json ($json_file);
+   my ($code, $errstr, $cmd, $update_date) = unauthorised_router ($castle_id, $json_file);
 
-   my ($code, $errstr, $cmd);
-
-   if ($type eq 'create') {
-
-      $cmd = "unauthorised_create_castle";
-      my $struct = {
-         key    => $data->{key},
-         stepdt => $data->{stepdt},
-         id     => $data->{id},
-         x      => $data->{x},
-         y      => $data->{y},
-         mapid  => $data->{mapid},
-         dt     => $data->{dt}
-      };
-      ($code, $errstr) = Decline::unauthorised_create_castle ($struct);
-   }
-   elsif ($data->{op} eq 'unauthorised_buy_army') {
-
-      $cmd = $data->{op};
-      my $struct = {
-         id      => $data->{id},
-         dt      => $data->{dt},
-         army_id => $data->{army_id},
-         name    => $data->{name}
-      };
-      ($code, $errstr) = Decline::unauthorised_buy_army ($struct);
-   }
-
-   if (! $cmd) {
-
-      warn $data->{op} ." : unimplemented cmd\n";
-      return 0;
-   }
-   elsif ($code) {
+   if ($code) {
 
       warn "$cmd code: $code errstr: $errstr\n";
       return 0;
@@ -1096,10 +1117,10 @@ sub sync_castle {
 
       warn "Copy $sig_file to $dest failed: $!\n";
    }
-   Decline::set_point_attribute ($point_template, 'checkdt', $data->{dt});
+   Decline::set_point_attribute ($point_template, 'checkdt', $update_date);
    unlink ($sig_file);
    unlink ($json_file);
-   return $data->{dt};
+   return $update_date;
    # TODO check
    # /tmp/000.json == data/0000/000.json
    # sha1 in /tmp/000.json == sha1 data/CASTLE/state.json
