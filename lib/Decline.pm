@@ -438,17 +438,22 @@ sub microseconds {
    return $microseconds;
 }
 
+sub parse_op_id {
+   my $opid = shift;
+
+   if ($opid && $opid =~ /^(\d{4})(\d{3})$/) {
+
+      return ($1, $2);
+   }
+   return (0, undef);
+}
+
 sub write_op {
    my ($hashref, $castle_id) = @_;
 
-   my ($sub_dir, $file);
+   my ($sub_dir, $file) = parse_op_id ($hashref->{opid});
 
-   if ($hashref->{opid} && $hashref->{opid} =~ /^(\d{4})(\d{3})$/) {
-
-      $sub_dir = $1;
-      $file    = $2;
-   }
-   else {
+   if (! defined ($file)) {
 
       return (1, "Bad operation ID ($hashref->{op} -> $hashref->{opid})");
    }
@@ -475,6 +480,7 @@ sub write_castle_state {
    my ($json, $castle_id) = @_;
 
    if (open (FILE, '>', catfile (get_decline_dir (), 'data', $castle_id, 'state.json'))) {
+
       print FILE $json;
       close (FILE);
    }
@@ -487,10 +493,10 @@ sub write_kingdom_state {
    my $result = {};
    foreach my $castle (sort {$a->{id} <=> $b->{id}} list_castles ()) {
 
-      my (undef,$sha1) = get_json_and_sha1 ($castle);
+      my (undef, $sha1) = get_json_and_sha1 ($castle);
       $result->{ $castle->{id} } = $sha1;
    }
-   my ($json,undef) = get_json_and_sha1 ($result);
+   my ($json, undef) = get_json_and_sha1 ($result);
    if (open (FILE, '>', catfile (get_decline_dir (), 'data', 'kingdom.json'))) {
 
       print FILE $json;
@@ -537,6 +543,7 @@ sub list_castles {
       next if ! -d $dir;
       next if ! -e catfile ($dir, 'state.json');
       if ($dir =~ /(\d+)$/) {
+
          push @list, load_castle ($1);
       }
    }
@@ -555,10 +562,12 @@ sub restrict_new_castle {
 
    my @list = list_my_castles ($key);
    my $max_create_dt = 0;
-   foreach my $c ( @list ) {
+   foreach my $c (@list) {
+
       $max_create_dt = $c->{dt} if $c->{dt} > $max_create_dt;
    }
    if ($max_create_dt < (get_utc_time () - (24*60*60))) {
+
       return 0;
    }
    return ($max_create_dt + (24*60*60) - get_utc_time ());
@@ -614,7 +623,7 @@ sub unauthorised_create_castle {
 }
 
 sub create_new_castle {
-   my ($key,$hour) = @_;
+   my ($key, $hour) = @_;
 
    my ($castle_id);
    foreach (1 .. 10000) {
@@ -640,55 +649,70 @@ sub create_new_castle {
    return $castle_id;
 }
 
-# TODO signature
+sub unauthorised_buy_army {
+   my $struct = shift;
+
+   my $castle_id = $struct->{id};
+   my $dt        = $struct->{dt};
+   my $army_id   = $struct->{army_id};
+   my $army_name = $struct->{name};
+
+   my $castle_ref = load_castle ($castle_id);
+   return (1, "Invalid castle id $castle_id") unless $castle_ref->{mapid};
+
+   return (1, "Invalid name: $army_name") if ! exists $army->{$army_name};
+
+   return (1, "Not enought gold") if $army->{$army_name}{1}{cost} > $castle_ref->{gold};
+   return (1, "Not enought population") if $castle_ref->{population} < 10;
+   return (1, "Internal error: key exists") if exists $castle_ref->{army}{$army_id};
+
+   my $clone_data = clone_data ($castle_ref);
+   return (1, "Internal error: $@") if ! exists $clone_data->{mapid};
+   $clone_data->{gold} -= $army->{$army_name}{1}{cost};
+   $clone_data->{population} -= 10;
+   $clone_data->{army}{$army_id} = {
+      name       => $army_name,
+      x          => $castle_ref->{x},
+      y          => $castle_ref->{y},
+      level      => 1,
+      expirience => 0,
+      movement   => $army->{$army_name}{1}{movement},
+      bdt        => $dt,
+      health     => 100
+   };
+   $clone_data->{opid} = op_stringification (++$clone_data->{opid});
+   my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
+   my ($json, $sha1) = get_json_and_sha1 ($clone_data);
+
+   return atomic_write_data ($castle_id, $json, {op => 'unauthorised_buy_army', army_id => $army_id, name => $army_name, dt => $dt, new => $sha1, old => $old_sha1, opid => $clone_data->{opid}});
+}
+
 sub buy_army {
    my ($castle_id, $army_name) = @_;
 
    my $castle_ref = load_castle ($castle_id);
    return "Invalid castle id $castle_id" unless $castle_ref->{mapid};
 
-   foreach my $arm (keys %{$army}) {
+   my $dt  = get_utc_time ();
+   my $mcs = microseconds ();
+   foreach (1 .. 60) {
 
-      if ($arm eq $army_name) {
-
-         return "Not enought gold" if $army->{$arm}{1}{cost} > $castle_ref->{gold};
-         return "Not enought population" if $castle_ref->{population} < 10;
-
-         my $clone_data = clone_data ($castle_ref);
-         return "Internal error: $@" if ! exists $clone_data->{mapid};
-         $clone_data->{gold} -= $army->{$arm}{1}{cost};
-         $clone_data->{population} -= 10;
-         my $dt  = get_utc_time ();
-         my $mcs = microseconds ();
-         if (exists $clone_data->{army}{$dt . $mcs}) {
-
-            sleep 1;
-            $mcs = microseconds ();
-            $dt  = get_utc_time ();
-         }
-         return "Internal error: key exists" if exists $clone_data->{army}{$dt . $mcs};
-         $clone_data->{army}{$dt . $mcs} = {
-            name       => $army_name,
-            x          => $castle_ref->{x},
-            y          => $castle_ref->{y},
-            level      => 1,
-            expirience => 0,
-            movement   => $army->{$arm}{1}{movement},
-            bdt        => $dt,
-            health     => 100
-         };
-         $clone_data->{opid} = op_stringification (++$clone_data->{opid});
-         my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
-         my ($json, $sha1) = get_json_and_sha1 ($clone_data);
-
-         my ($rc, @data) = atomic_write_data ($castle_id, $json, {op => 'buy', name => $arm, dt => $dt, new => $sha1, old => $old_sha1, opid => $clone_data->{opid}});
-
-         return $data[0] if $rc;
-         gpg_create_signature (@data);
-         return 0;
-      }
+      last if ! exists $castle_ref->{army}{$dt . $mcs};
+      sleep 1;
+      $mcs = microseconds ();
+      $dt  = get_utc_time ();
    }
-   return "Invalid name: $army_name";
+
+   my ($rc, @data) = unauthorised_buy_army ({
+      id => $castle_id,
+      dt => $dt,
+      army_id => $dt . $mcs,
+      name => $army_name
+   });
+
+   return $data[0] if $rc;
+   gpg_create_signature (@data);
+   return 0;
 }
 
 sub coord_for_direction {
@@ -845,7 +869,7 @@ sub increase_population {
 }
 
 sub increase_movement {
-   my ($castle_ref,$dt) = @_;
+   my ($castle_ref, $dt) = @_;
 
    my $clone_data = clone_data ($castle_ref);
 
@@ -905,10 +929,12 @@ sub local_update_castle {
             if ($datetime->hour_1() == $castlehr->{stepdt}) {
 
                increase_movement ($castlehr, $basedt);
+               $castlehr = load_castle ($castlehr->{id});
             }
             if (! ($datetime->hour_1() % 3)) {
 
                increase_population ($castlehr, $basedt);
+               $castlehr = load_castle ($castlehr->{id});
             }
             $basedt += (60*60);
          }
@@ -939,6 +965,99 @@ sub gen_address {
    return ('', "Bad template" ) if $template !~ /^http:(\d+)\.(\d+)\.(\d+)\.(\d+):(\d+)$/;
 
    return (join ('', 'http://', (split (':', $template))[1], ':', (split (':', $template))[2]), '');
+}
+
+sub sync_castle {
+   my ($type, $castle_id, $point_template) = @_;
+
+   my $ua = LWP::UserAgent->new;
+   $ua->timeout (4);
+
+   my ($subdir, $file) = ('0000', '000');
+
+   if ($type eq "update") {
+
+      my $obj = load_castle ($castle_id);
+      ($subdir, $file) = parse_op_id (++$obj->{opid});
+      if (! defined ($file)) {
+
+         die "Unable load last operation id for castle $castle_id\n";
+      }
+   }
+   my ($url) = gen_address ($point_template);
+
+   warn "Castle $castle_id : $type ($file)\n";
+   my $json_file = catfile (get_decline_dir (), 'tmp', "$file.json");
+   my $sig_file = catfile (get_decline_dir (), 'tmp', "$file.sig");
+   my $res1 = $ua->mirror ("$url/$castle_id/$subdir/$file.json", $json_file);
+   my $res2 = $ua->mirror ("$url/$castle_id/$subdir/$file.sig",  $sig_file);
+
+   if ($res1->code !~ /^(2|3)/ || $res2->code !~ /^(2|3)/) {
+
+      warn "Not found next file $file\n";
+      return 0;
+   }
+
+   my $rc = Decline::gpg_verify_signature ($json_file, $sig_file);
+
+   if ($rc) {
+
+      warn "failed verification $file.sig $castle_id\n";
+      return 0;
+   }
+
+   my $data = Decline::load_json ($json_file);
+
+   my ($code, $errstr, $cmd);
+
+   if ($type eq 'create') {
+
+      $cmd = "unauthorised_create_castle";
+      my $struct = {
+         key    => $data->{key},
+         stepdt => $data->{stepdt},
+         id     => $data->{id},
+         x      => $data->{x},
+         y      => $data->{y},
+         mapid  => $data->{mapid},
+         dt     => $data->{dt}
+      };
+      ($code, $errstr) = Decline::unauthorised_create_castle ($struct);
+   }
+   elsif ($data->{op} eq 'unauthorised_buy_army') {
+
+      $cmd = $data->{op};
+      my $struct = {
+         id      => $data->{id},
+         dt      => $data->{dt},
+         army_id => $data->{army_id},
+         name    => $data->{name}
+      };
+      ($code, $errstr) = Decline::unauthorised_buy_army ($struct);
+   }
+
+   if (! $cmd) {
+
+      warn $data->{op} ." : unimplemented cmd\n";
+      return 0;
+   }
+   elsif ($code) {
+
+      warn "$cmd code: $code errstr: $errstr\n";
+      return 0;
+   }
+   my $dest = catfile (get_decline_dir (), 'data', $castle_id, $subdir, "$file.sig");
+   if (! copy ($sig_file, $dest)) {
+
+      warn "Copy $sig_file to $dest failed: $!\n";
+   }
+   Decline::set_point_attribute ($point_template, 'checkdt', $data->{dt});
+   unlink ($sig_file);
+   unlink ($json_file);
+   return $data->{dt};
+   # TODO check
+   # /tmp/000.json == data/0000/000.json
+   # sha1 in /tmp/000.json == sha1 data/CASTLE/state.json
 }
 
 sub sync_castles {
@@ -981,52 +1100,13 @@ sub sync_castles {
       # TODO sort by date
       foreach my $k (keys %{$new_struct}) {
 
-         next if exists $old_struct->{$k};
+         if (my $dt = Decline::sync_castle ((exists $old_struct->{$k} ? "update" : "create"), $k, $p)) {
 
-         warn "New castle $k\n";
-         my $json_file = catfile (get_decline_dir (), 'tmp', '000.json');
-         my $sig_file = catfile (get_decline_dir (), 'tmp', '000.sig');
-         $response = $ua->mirror ("$url/$k/0000/000.json", $json_file);
-         $response = $ua->mirror ("$url/$k/0000/000.sig", $sig_file);
-         my $rc = Decline::gpg_verify_signature ($json_file, $sig_file);
-
-         if ($rc) {
-
-            warn "failed verification\n";
-            next;
+            return $dt;
          }
-
-         my $data = Decline::load_json ($json_file);
-         my $struct = {
-            key    => $data->{key},
-            stepdt => $data->{stepdt},
-            id     => $data->{id},
-            x      => $data->{x},
-            y      => $data->{y},
-            mapid  => $data->{mapid},
-            dt     => $data->{dt}
-         };
-         my ($code, $errstr) = Decline::unauthorised_create_castle ($struct);
-         if ($code) {
-
-            warn "unauthorised_create_castle $code : $errstr\n";
-            next;
-         }
-         my $dest = catfile (get_decline_dir (), 'data', $k, '0000', '000.sig');
-         if (! copy ($sig_file, $dest)) {
-
-            warn "Copy $sig_file to $dest failed: $!\n";
-         }
-         Decline::set_point_attribute ($p, 'checkdt', $data->{dt});
-         unlink ($sig_file);
-         unlink ($json_file);
-         return $data->{dt};
-         # TODO check
-         # /tmp/000.json == data/0000/000.json
-         # sha1 in /tmp/000.json == sha1 data/CASTLE/state.json
-         # copy /tmp/000.sig data/0000/000.json
       }
    }
+   return 0;
 }
 
 sub sync_keys {

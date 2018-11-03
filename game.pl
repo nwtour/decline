@@ -107,6 +107,7 @@ any '/public/:select/:castle' => sub {
 any '/public/update' => sub {
    my $c   = shift;
 
+   # TODO deadlock handler
    if (my $lockmrg = Decline::lock_data ("update")) {
 
       if (my $dt = Decline::get_updates ()) {
