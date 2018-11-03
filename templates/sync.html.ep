@@ -3,7 +3,7 @@
 
 <br><br><br>
 
-<table width="50%" border="1">
+<table width="80%" border="1">
 
 %  my $s = ($params->{address} ? 0 : 1);
 
@@ -51,7 +51,7 @@
 %  else {
 
 %  }
-   <tr><td>Ключ</td><td>Тип</td><td>Протокол</td><td>Адрес</td><td>Порт</td><td>Последняя синхронизация</td></tr>
+   <tr><td>Ключ</td><td>Тип</td><td>Протокол</td><td>Адрес</td><td>Порт</td><td>Синхронизация</td></tr>
 %  foreach my $p (keys %{$params->{points}}) {
 
       <tr>
@@ -75,8 +75,16 @@
          <td>
 %==         ((split (':', $p))[2])
          </td>
-         <td>
+         <td style="text-align: left;">
+            Последняя попытка подключиться: 
 %==         ($params->{points}{$p}{checkdt} ? scalar (localtime ($params->{points}{$p}{checkdt})) : 'Пусто')
+            <br>
+            Последний раз был доступен:
+%==         ($params->{points}{$p}{livedt} ? scalar (localtime ($params->{points}{$p}{livedt})) : 'Пусто')
+            <br>
+            Последнее успешное синхронизирование:
+%==         ($params->{points}{$p}{transferdt} ? scalar (localtime ($params->{points}{$p}{transferdt})) : 'Пусто')
+            <br>
          </td>
       </tr>
 % }

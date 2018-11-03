@@ -116,15 +116,14 @@ any '/public/:select/:castle' => sub {
 any '/public/update' => sub {
    my $c   = shift;
 
-   # TODO deadlock handler
-   if (my $lockmrg = Decline::lock_data ("update")) {
+   if (Decline::lock_data ("update")) {
 
       if (my $dt = Decline::get_updates ()) {
 
-         Decline::unlock_data ($lockmrg, "update");
+         Decline::unlock_data ("update");
          return $c->render (text => scalar (localtime ($dt)));
       }
-      Decline::unlock_data ($lockmrg, "update");
+      Decline::unlock_data ("update");
    }
    $c->render (text => '');
 };

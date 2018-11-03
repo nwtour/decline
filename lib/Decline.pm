@@ -7,13 +7,13 @@ use File::Spec::Functions qw(catfile);
 use DateTime;
 use Mojo::JSON qw(decode_json encode_json);
 use LWP::UserAgent;
+use Mojo::UserAgent;
 use Time::HiRes qw(gettimeofday);
 use Digest::SHA  qw(sha1_hex);
 use LWP::Simple qw(mirror);
 use LWP::Protocol::https;
 use Archive::Zip;
 use File::stat;
-use LockFile::Simple;
 use File::Copy qw(copy);
 
 our $decline_dir;
@@ -46,6 +46,7 @@ sub create_directory_tree {
    mkdir (catfile ($d, 'data'));
    mkdir (catfile (get_decline_dir (), 'data', 'remote'));
    mkdir (catfile ($d, 'key'));
+   mkdir (catfile ($d, 'tmp'));
 
    if ($castle_id) {
 
@@ -168,25 +169,33 @@ sub gpg_verify_signature {
 sub lock_data {
    my $file = shift;
 
-   $file = ($file ? $file : "file");
+   my $lockfile = catfile (get_decline_dir (), 'data', ($file || "file" ) . '.lck');
 
-   my $format = catfile (get_decline_dir (), 'data', '%f.lck');
-   my $lockmgr = LockFile::Simple->make (-format => $format, -max => 1, -delay => 1, -stale => 1);
+   if (-f $lockfile) {
 
-   foreach my $try (1 .. 3) {
+      if (read_file_slurp ($lockfile) ne $$ || stat ($lockfile)->mtime < (time - (10*60))) {
 
-      warn "trylock $try\n" if $try ne 1;
-      return $lockmgr if $lockmgr->lock ($file);
+         unlink ($lockfile);
+      }
+   }
+
+   return undef if -f $lockfile;
+
+   if (open (FILE, '>', $lockfile)) {
+
+      print FILE $$;
+      close (FILE);
+      return 1;
    }
    return undef;
 }
 
 sub unlock_data {
-   my ($lockmgr, $file) = @_;
+   my $file = shift;
 
-   $file = ($file ? $file : "file");
+   my $lockfile = catfile (get_decline_dir (), 'data', ($file || "file" ) . '.lck');
 
-   $lockmgr->unlock ($file) if $lockmgr;
+   unlink ($lockfile) if -e $lockfile;
 }
 
 sub get_gpg_path_escape {
@@ -539,17 +548,17 @@ sub write_kingdom_state {
 sub atomic_write_data {
    my ($castle_id, $json, $op) = @_;
 
-   if (my $lockmrg = lock_data ()) {
+   if (lock_data ()) {
 
       my ($rc, @list) = write_op ($op, $castle_id);
       if ($rc) {
 
-         unlock_data ($lockmrg);
+         unlock_data ();
          return ($rc, $list[0]);
       }
       write_castle_state ($json, $castle_id);
       write_kingdom_state ();
-      unlock_data ($lockmrg);
+      unlock_data ();
       return (0, @list);
    }
    return (1, "DATA directory locked");
@@ -879,6 +888,34 @@ sub picture_by_coord {
    return $geo_index->{$mapid}{$x}{$y};
 }
 
+sub unauthorised_increase_population {
+   my $struct = shift;
+
+   my $castle_ref = load_castle ($struct->{id});
+   my $clone_data = clone_data ($castle_ref);
+   $clone_data->{laststep}            = $struct->{dt};
+   $clone_data->{gold_increase}       = sprintf ("%.2f", $struct->{gold_increase});
+   $clone_data->{population_increase} = $struct->{population_increase};
+
+   $clone_data->{gold}       += $struct->{gold_increase};
+   $clone_data->{population} += $struct->{population_increase};
+
+   $clone_data->{opid} = op_stringification (++$clone_data->{opid});
+
+   my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
+   my ($json, $sha1) = get_json_and_sha1 ($clone_data);
+   my $op = {
+      op                  => 'unauthorised_increase_population',
+      gold_increase       => $struct->{gold_increase},
+      population_increase => $struct->{population_increase},
+      dt                  => $struct->{dt},
+      new                 => $sha1,
+      old                 => $old_sha1,
+      opid                => $clone_data->{opid},
+   };
+   return atomic_write_data ($struct->{id}, $json, $op);
+}
+
 # население плюс 2 процента каждые три часа
 # деньги 4 процента от населения
 sub increase_population {
@@ -891,31 +928,12 @@ sub increase_population {
    $population = int ($population / 50);
    $population = 1 unless $population;
 
-   my $clone_data = clone_data ($castle_ref);
-   $clone_data->{laststep} = $dt;
-   $clone_data->{gold_increase} = $gold;
-   $clone_data->{population_increase} = $population;   
-
-   # TODO army tarif
-   # TODO obrok
-
-   $clone_data->{gold}       += $gold;
-   $clone_data->{population} += $population;
-
-   $clone_data->{opid} = op_stringification (++$clone_data->{opid});
-
-   my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
-   my ($json, $sha1) = get_json_and_sha1 ($clone_data);
-   my $op = {
-      op                  => 'unauthorised_increase_population',
+   my ($rc, @data) = unauthorised_increase_population ({
+      id                  => $castle_ref->{id},
+      dt                  => $dt,
       gold_increase       => $gold,
       population_increase => $population,
-      dt                  => $dt,
-      new                 => $sha1,
-      old                 => $old_sha1,
-      opid                => $clone_data->{opid},
-   };
-   my ($rc, @data) = atomic_write_data ($castle_ref->{id}, $json, $op);
+   });
    warn $data[0] . "\n" if $rc;
    gpg_create_signature (@data) if ! $rc;
 }
@@ -1059,18 +1077,22 @@ sub unauthorised_router {
 
       ($code, $errstr) = Decline::unauthorised_move_army ($data);
    }
+   elsif ($cmd eq 'unauthorised_increase_population') {
+
+      ($code, $errstr) = Decline::unauthorised_increase_population ($data);
+   }
    else {
 
       return (1, "Unimplemented $cmd", $cmd);
    }
-   return ($code, $errstr, $cmd, $data->{dt});
+   return ($code, $errstr, $cmd, $data->{dt}, $data->{new});
 }
 
 sub sync_castle {
-   my ($type, $castle_id, $point_template) = @_;
+   my ($type, $castle_id, $point_template, $needed_sha1) = @_;
 
    my $ua = LWP::UserAgent->new;
-   $ua->timeout (4);
+   $ua->timeout (20);
 
    my ($subdir, $file) = ('0000', '000');
 
@@ -1093,19 +1115,23 @@ sub sync_castle {
 
    if ($res1->code !~ /^(2|3)/ || $res2->code !~ /^(2|3)/) {
 
-      warn "Not found next file $file\n";
+      my $real_sha1 = sha1_hex_file (catfile (get_decline_dir (), 'data', $castle_id, 'state.json'));
+      if ($real_sha1 ne $needed_sha1) {
+
+         warn "Not found next file $file (but kingdom incomplete) $real_sha1 $needed_sha1\n";
+      }
       return 0;
    }
 
-   my $rc = Decline::gpg_verify_signature ($json_file, $sig_file);
+   if (my $rc = Decline::gpg_verify_signature ($json_file, $sig_file)) {
 
-   if ($rc) {
-
+      unlink ($sig_file);
+      unlink ($json_file);
       warn "failed verification $file.sig $castle_id\n";
       return 0;
    }
 
-   my ($code, $errstr, $cmd, $update_date) = unauthorised_router ($castle_id, $json_file);
+   my ($code, $errstr, $cmd, $update_date, $oplog_sha1) = unauthorised_router ($castle_id, $json_file);
 
    if ($code) {
 
@@ -1117,13 +1143,28 @@ sub sync_castle {
 
       warn "Copy $sig_file to $dest failed: $!\n";
    }
-   Decline::set_point_attribute ($point_template, 'checkdt', $update_date);
    unlink ($sig_file);
    unlink ($json_file);
+
+   my $real_sha1 = sha1_hex_file (catfile (get_decline_dir (), 'data', $castle_id, 'state.json'));
+
+   if ($real_sha1 eq $oplog_sha1) {
+
+      Decline::set_point_attribute ($point_template, 'transferdt', $update_date);
+      if ($needed_sha1 eq $oplog_sha1) {
+
+         warn "CONGRATULATION TRANSFER\n";
+      }
+      else {
+
+         warn "Transfer valid, but kingdom incomplete\n";
+      }
+   }
+   else {
+
+      warn "ERROR Transfer $castle_id : needed: $needed_sha1 oplog: $oplog_sha1 real: $real_sha1\n";
+   }
    return $update_date;
-   # TODO check
-   # /tmp/000.json == data/0000/000.json
-   # sha1 in /tmp/000.json == sha1 data/CASTLE/state.json
 }
 
 sub sync_castles {
@@ -1131,19 +1172,14 @@ sub sync_castles {
    my $points = get_points ();
 
    my $ua = LWP::UserAgent->new;
-   $ua->timeout (4);
+   $ua->timeout (20);
 
    foreach my $p (keys %{$points}) {
 
-      next if $p eq get_my_address ();
-
       my ($url, $errstr) = gen_address ($p);
-
-      unless ($url) {
-
-         warn "Point $p error $errstr\n";
-         next;
-      }
+      next if $p eq get_my_address ();
+      next if ($points->{$p}{livedt} || 0) < get_utc_time () - 20;
+      next if ! $url;
 
       my $response = $ua->mirror ("$url/kingdom.json", catfile (get_decline_dir (), 'data', 'remote', "$p.kingdom.json"));
 
@@ -1164,7 +1200,10 @@ sub sync_castles {
       # TODO sort by date
       foreach my $k (keys %{$new_struct}) {
 
-         if (my $dt = Decline::sync_castle ((exists $old_struct->{$k} ? "update" : "create"), $k, $p)) {
+         # sha1 in kingdom.json == state.json: kingdom.json incomplete another side
+         next if $new_struct->{$k} eq sha1_hex_file (catfile (get_decline_dir (), 'data', $k, 'state.json'));
+
+         if (my $dt = Decline::sync_castle ((exists $old_struct->{$k} ? "update" : "create"), $k, $p, $new_struct->{$k})) {
 
             return $dt;
          }
@@ -1178,26 +1217,23 @@ sub sync_keys {
    my $points = get_points ();
 
    my $ua = LWP::UserAgent->new;
-   $ua->timeout (4);
+   $ua->timeout (20);
 
    create_directory_tree ();
 
    foreach my $p (keys %{$points}) {
 
-      next if $p eq get_my_address ();
-
       my ($url, $errstr) = gen_address ($p);
 
-      unless ($url) {
+      next if $p eq get_my_address ();
+      next if ! $url;
+      next if ($points->{$p}{livedt} || 0) < get_utc_time () - 20;
 
-         warn "Point $p error $errstr\n";
-         next;
-      }
       my $response = $ua->mirror ($url . '/keys.json', catfile (get_decline_dir (), 'data', 'remote', "$p.keys.json"));
 
       if ($response->code !~ /^(2|3)/) {
 
-         warn "Debug $url/keys.json : " . $response->code . "\n";
+         warn "Debug $url : " . $response->code . "\n";
          next;
       }
 
@@ -1238,7 +1274,34 @@ sub sync_keys {
    }
 }
 
+sub prepare_points {
+
+   my $points = get_points ();
+
+   foreach my $p (keys %{$points}) {
+
+      next if $p eq get_my_address ();
+      my ($url, $errstr) = gen_address ($p);
+      if (! $url) {
+
+         warn "INVALID POINT $p\n";
+         next;
+      }
+
+      next if ($points->{$p}{checkdt} || 0) > get_utc_time () - 20;
+      Decline::set_point_attribute ($p, 'checkdt', Decline::get_utc_time ());
+
+      my $r = Mojo::UserAgent->new->max_redirects(0)->connect_timeout(5)->request_timeout(10)->inactivity_timeout(10)->get ($url . '/keys.json');
+      if ($r->res->code == 200) {
+
+         warn "$url IS LIVE\n";
+         Decline::set_point_attribute ($p, 'livedt', Decline::get_utc_time ());
+      }
+   }
+}
+
 sub remote_updates {
+   prepare_points ();
    sync_keys ();
    my $dt = sync_castles ();
    return $dt;
