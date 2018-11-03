@@ -29,7 +29,7 @@
          <td bgcolor="#dddd00" colspan="2"><b>Баланс за последние три часа</b></td>
       </tr>
       <tr>
-         <td style="text-align: right;">От населения</td><td style="text-align: right;"><font color="#007700"><%= $castle->{gold_increase} %></font></td>
+         <td style="text-align: right;">От населения</td><td style="text-align: right;"><font color="#007700"><%= ($castle->{gold_increase} || 0) %></font></td>
       </tr>
       <tr>
          <td bgcolor="#dddd00" colspan="2"><b>Войска в замке</b></td>

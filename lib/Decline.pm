@@ -148,21 +148,27 @@ sub gpg_verify_signature {
 }
 
 sub lock_data {
+   my $file = shift;
+
+   $file = ($file ? $file : "file");
+
    my $format = catfile (get_decline_dir (), 'data', '%f.lck');
    my $lockmgr = LockFile::Simple->make (-format => $format, -max => 1, -delay => 1, -stale => 1);
 
    foreach my $try (1 .. 3) {
 
       warn "trylock $try\n" if $try ne 1;
-      return $lockmgr if $lockmgr->lock ("file");
+      return $lockmgr if $lockmgr->lock ($file);
    }
    return undef;
 }
 
 sub unlock_data {
-   my $lockmgr = shift;
+   my ($lockmgr, $file) = @_;
 
-   $lockmgr->unlock("file") if $lockmgr;
+   $file = ($file ? $file : "file");
+
+   $lockmgr->unlock ($file) if $lockmgr;
 }
 
 sub get_gpg_path_escape {
@@ -675,9 +681,10 @@ sub buy_army {
          my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
          my ($json, $sha1) = get_json_and_sha1 ($clone_data);
 
-         my ($rc, $err) = atomic_write_data ($castle_id, $json, {op => 'buy', name => $arm, dt => $dt, new => $sha1, old => $old_sha1, opid => $clone_data->{opid}});
+         my ($rc, @data) = atomic_write_data ($castle_id, $json, {op => 'buy', name => $arm, dt => $dt, new => $sha1, old => $old_sha1, opid => $clone_data->{opid}});
 
-         return $err if $rc;
+         return $data[0] if $rc;
+         gpg_create_signature (@data);
          return 0;
       }
    }
@@ -751,9 +758,10 @@ sub move_army {
    $clone_data->{opid} = op_stringification (++$clone_data->{opid});
    my (undef,$old_sha1) = get_json_and_sha1 ($castle_ref);
    my ($json,$sha1) = get_json_and_sha1 ($clone_data);
-   my ($rc, $err) = atomic_write_data ($castle_id, $json, {op => 'move', direction => $direction, dt => get_utc_time (), new => $sha1, old => $old_sha1, opid => $clone_data->{opid}});
+   my ($rc, @data) = atomic_write_data ($castle_id, $json, {op => 'move', direction => $direction, dt => get_utc_time (), new => $sha1, old => $old_sha1, opid => $clone_data->{opid}});
 
-   return $err if $rc;
+   return $data[0] if $rc;
+   gpg_create_signature (@data);
    return 0;
 }
 
@@ -831,8 +839,9 @@ sub increase_population {
       old                 => $old_sha1,
       opid                => $clone_data->{opid},
    };
-   my ($rc, $err) = atomic_write_data ($castle_ref->{id}, $json, $op);
-   warn "$err\n" if $rc;
+   my ($rc, @data) = atomic_write_data ($castle_ref->{id}, $json, $op);
+   warn $data[0] . "\n" if $rc;
+   gpg_create_signature (@data) if ! $rc;
 }
 
 sub increase_movement {
@@ -864,9 +873,10 @@ sub increase_movement {
    $clone_data->{opid} = op_stringification (++$clone_data->{opid});
    my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
    my ($json, $sha1) = get_json_and_sha1 ($clone_data);
-   my ($rc, $err) = atomic_write_data ($castle_ref->{id}, $json, {op => 'increase_movement', data => $ops, dt => $dt, new => $sha1, old => $old_sha1, opid => $clone_data->{opid}});
+   my ($rc, @data) = atomic_write_data ($castle_ref->{id}, $json, {op => 'increase_movement', data => $ops, dt => $dt, new => $sha1, old => $old_sha1, opid => $clone_data->{opid}});
 
-   warn "$err\n" if $rc;
+   warn $data[0] . "\n" if $rc;
+   gpg_create_signature (@data) if ! $rc;
 }
 
 
@@ -875,6 +885,7 @@ sub local_update_castle {
 
    my $dt = get_utc_time ();
    if ($castlehr->{laststep} < ($dt - (60*60))) {
+
       my $basedt = ($castlehr->{laststep} > $castlehr->{dt} ? $castlehr->{laststep} : $castlehr->{dt});
 
       die "Error laststep > current date\n" if $basedt > $dt;
@@ -912,7 +923,8 @@ sub local_update_castle {
 sub local_updates {
 
    my $dt = get_utc_time ();
-   foreach my $castlehr (list_my_castles ()) {
+   my $key = get_key_id ();
+   foreach my $castlehr (list_my_castles ($key)) {
 
       local_update_castle ($castlehr);
       return if $dt < (get_utc_time () - 2);
@@ -950,19 +962,19 @@ sub sync_castles {
          next;
       }
 
-      my $response = $ua->mirror ("$url/kingdom.json", catfile (get_decline_dir (), 'tmp', "$p.kingdom.json"));
+      my $response = $ua->mirror ("$url/kingdom.json", catfile (get_decline_dir (), 'data', 'remote', "$p.kingdom.json"));
 
       if ($response->code !~ /^(2|3)/) {
 
-         warn "Error $url/kingdom.json : " . $response->code . "\n";
+         warn "Debug: $url/kingdom.json : " . $response->code . "\n";
          next;
       }
 
-      next if (Decline::sha1_hex_file (catfile (get_decline_dir (), 'tmp', "$p.kingdom.json")) eq
+      next if (Decline::sha1_hex_file (catfile (get_decline_dir (), 'data', 'remote', "$p.kingdom.json")) eq
                Decline::sha1_hex_file (catfile (get_decline_dir (), 'data', "kingdom.json")));
 
       my $old_struct = Decline::load_json (catfile (get_decline_dir (), 'data', "kingdom.json"));
-      my $new_struct = Decline::load_json (catfile (get_decline_dir (), 'tmp', "$p.kingdom.json"));
+      my $new_struct = Decline::load_json (catfile (get_decline_dir (), 'data', 'remote', "$p.kingdom.json"));
 
       die "Bad keys.json\n" if ref ($new_struct) ne 'HASH';
 
@@ -971,7 +983,7 @@ sub sync_castles {
 
          next if exists $old_struct->{$k};
 
-         print "New castle $k\n";
+         warn "New castle $k\n";
          my $json_file = catfile (get_decline_dir (), 'tmp', '000.json');
          my $sig_file = catfile (get_decline_dir (), 'tmp', '000.sig');
          $response = $ua->mirror ("$url/$k/0000/000.json", $json_file);
@@ -1005,6 +1017,10 @@ sub sync_castles {
 
             warn "Copy $sig_file to $dest failed: $!\n";
          }
+         Decline::set_point_attribute ($p, 'checkdt', $data->{dt});
+         unlink ($sig_file);
+         unlink ($json_file);
+         return $data->{dt};
          # TODO check
          # /tmp/000.json == data/0000/000.json
          # sha1 in /tmp/000.json == sha1 data/CASTLE/state.json
@@ -1037,7 +1053,7 @@ sub sync_keys {
 
       if ($response->code !~ /^(2|3)/) {
 
-         warn "Error $url/keys.json : " . $response->code . "\n";
+         warn "Debug $url/keys.json : " . $response->code . "\n";
          next;
       }
 
@@ -1080,14 +1096,15 @@ sub sync_keys {
 
 sub remote_updates {
    sync_keys ();
-   sync_castles ();
+   my $dt = sync_castles ();
+   return $dt;
 }
 
 sub get_updates {
 
    local_updates  ();
-   remote_updates ();
-   return 0;
+   my $dt = remote_updates ();
+   return $dt;
 }
 
 sub random_color {
@@ -1143,12 +1160,8 @@ sub generate_svg {
       my ($cid, $x, $y) = ($castle_ref->{id}, $castle_ref->{x}, $castle_ref->{y});
       my $z = $svg->group (id => "group$cid", style => {fill => $color});
       $z->circle (cx => ($x * $multi), cy => ($y * $multi), r => (1*$multi), id => "circle$cid");
-      if ($key eq $ckey) {
-
-         $svg->anchor (-href => "/public/castle/$cid",target => '_blank')->text (id => "t$cid", x => (($x*$multi) + $multi), y  => ($y*$multi), style => {'font' => 'Tahoma, Geneva, sans-serif', 'font-size' => 7})->cdata("${x}x${y} Без названия");
-         next;
-      }
-      $svg->text (id => "t$cid", x => (($x*$multi) + $multi), y  => ($y*$multi), style => {'font' => 'Tahoma, Geneva, sans-serif', 'font-size' => 7})->cdata("${x}x${y}");
+      my $text = ($key eq $ckey ? "${x}x${y} Без названия" : "${x}x${y}");
+      $svg->text (id => "t$cid", x => (($x*$multi) + $multi), y  => ($y*$multi), style => {'font' => 'Tahoma, Geneva, sans-serif', 'font-size' => 7})->cdata ($text);
    }
    return $svg;
 }

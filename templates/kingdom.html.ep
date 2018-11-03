@@ -3,8 +3,12 @@
 <div class="base" id="base">
 %  foreach my $mapid (1 .. 2) {
       <h1>Карта <%= $mapid %> (<%= $mapid %>00x<%= $mapid %>00)</h1><br>
-      <object type="image/svg+xml" data="/svg/kingdom/<%= $mapid %>.svg" style="min-width: 50%; max-width: 100%; min-height: auto; max-height: auto;">
-      </object>
+
+% # TODO object width scaling
+% #      <object type="image/svg+xml" data="/svg/kingdom/<%= $mapid %>.svg" style="min-width: 50%; max-width: 100%; min-height: auto; max-height: auto;">
+% #      </object>
+
+      <image src="/svg/kingdom/<%= $mapid %>.svg" style="min-width: 50%; max-width: 100%; min-height: auto; max-height: auto;">
 %  }
 </div>
 % end

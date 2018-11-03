@@ -8,4 +8,8 @@
         <%= $file %> <a href="/global/settings/?update=<%= $params->{files}{$file} %>">Обновить файл</a><br><br>
 %    }
 % }
+% else {
+
+     <h1>Все файлы последней версии (обновление не требуется)</h1><br>
+% }
 % end

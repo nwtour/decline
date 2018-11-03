@@ -9,7 +9,21 @@
 
 %  if ($key || $s) {
 
-      <tr><td colspan="5">
+      <tr><td colspan="6">
+         <h1>
+%        if ($s) {
+
+            Для синхронизации с другими точками укажите СВОЙ внешний адрес и порт
+%        }
+%        elsif (scalar (keys %{$params->{points}}) == 1) {
+
+            Необходимо указать адрес и порт хотя бы одной внешней точки для синхронизации
+%        }
+%        else {
+
+            Добавить еще одну точку обмена (не обязательно)
+%        }
+         </h1>
          <form method="GET" action="/global/sync/">
             IP-адрес <input type="text" name="ip"><br>
             Порт <input type="text" name="port"><br>
@@ -20,7 +34,7 @@
 %  }
 %  elsif (! $key ) {
 
-      <tr><td colspan="5">
+      <tr><td colspan="6">
          Создание ключа<br>
 %        if ($params->{gpg_path}) {
 
@@ -37,7 +51,7 @@
 %  else {
 
 %  }
-   <tr><td>Ключ</td><td>Тип</td><td>Протокол</td><td>Адрес</td><td>Порт</td></tr>
+   <tr><td>Ключ</td><td>Тип</td><td>Протокол</td><td>Адрес</td><td>Порт</td><td>Последняя синхронизация</td></tr>
 %  foreach my $p (keys %{$params->{points}}) {
 
       <tr>
@@ -60,6 +74,9 @@
          </td>
          <td>
 %==         ((split (':', $p))[2])
+         </td>
+         <td>
+%==         ($params->{points}{$p}{checkdt} ? scalar (localtime ($params->{points}{$p}{checkdt})) : 'Пусто')
          </td>
       </tr>
 % }

@@ -42,7 +42,7 @@ my $hash = {
 
 any '/:select/:castle/dynamic.js' => sub {
    my $c = shift;
-   $c->stash (select => $c->param('select'));
+   $c->stash (select => $c->param ('select'));
    
    return $c->render (template => 'dynamic_js');
 };
@@ -57,11 +57,11 @@ any '/buy/:name/:castle' => sub {
 
    if (my $key = Decline::get_key_id ()) {
 
-      if (my $err = Decline::buy_army ($c->param('castle'), $c->param('name'))) {
+      if (my $err = Decline::buy_army ($c->param ('castle'), $c->param ('name'))) {
 
          return $c->render (text => "Buy error: $err");
       }
-      return $c->redirect_to ("/public/army/" . $c->param('castle'));
+      return $c->redirect_to ("/public/army/" . $c->param ('castle'));
    }
    $c->render (text => "Unauthorised");
 };
@@ -91,7 +91,7 @@ any '/public/:select/:castle' => sub {
 
             return $c->render (text => "Move error $err");
          }
-         return $c->redirect_to ("/public/map/$castle/?aid=" . $c->param('aid'));
+         return $c->redirect_to ("/public/map/$castle/?aid=" . $c->param ('aid'));
       }
       if (exists $hash->{$select} && $hash->{$select}{in_castle}){
 
@@ -106,9 +106,15 @@ any '/public/:select/:castle' => sub {
 
 any '/public/update' => sub {
    my $c   = shift;
-   if (Decline::get_updates ()) {
 
-      return $c->render (text => scalar (localtime));
+   if (my $lockmrg = Decline::lock_data ("update")) {
+
+      if (my $dt = Decline::get_updates ()) {
+
+         Decline::unlock_data ($lockmrg, "update");
+         return $c->render (text => scalar (localtime ($dt)));
+      }
+      Decline::unlock_data ($lockmrg, "update");
    }
    $c->render (text => '');
 };
@@ -118,7 +124,7 @@ any '/svg/kingdom/#name' => sub {
 
    if (my $key = Decline::get_key_id ()) {
 
-      $c->stash (svg => Decline::generate_svg ($c->param('name'), $key));
+      $c->stash (svg => Decline::generate_svg ($c->param ('name'), $key));
       return $c->render (template => 'kingdom_svg', format => 'svg');
    }
    $c->render (text => 'Unautorized');
@@ -159,7 +165,7 @@ any '/global/:select' => sub {
       }
       else {
 
-         $params->{yes} = $c->param('yes');
+         $params->{yes} = $c->param ('yes');
       }
    }
 
