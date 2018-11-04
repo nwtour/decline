@@ -718,6 +718,7 @@ sub unauthorised_create_castle {
       y          => $y,
       gold       => 50,
       population => 100,
+      power      => 0,
       mapid      => $mapid,
       army       => {},
       stepdt     => $stepdt,
@@ -779,8 +780,10 @@ sub unauthorised_buy_army {
 
    my $clone_data = clone_data ($castle_ref);
    return (1, "Internal error: $@") if ! exists $clone_data->{mapid};
-   $clone_data->{gold} -= $army->{$army_name}{1}{cost};
+   $clone_data->{gold}       -= $army->{$army_name}{1}{cost};
    $clone_data->{population} -= 10;
+   $clone_data->{power}      += $army->{$army_name}{1}{cost};
+
    $clone_data->{army}{$army_id} = {
       name       => $army_name,
       x          => $castle_ref->{x},
@@ -795,7 +798,15 @@ sub unauthorised_buy_army {
    my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
    my ($json, $sha1) = get_json_and_sha1 ($clone_data);
 
-   return atomic_write_data ($castle_id, $json, {op => 'unauthorised_buy_army', army_id => $army_id, name => $army_name, dt => $dt, new => $sha1, old => $old_sha1, opid => $clone_data->{opid}});
+   return atomic_write_data ($castle_id, $json, {
+      op      => 'unauthorised_buy_army',
+      army_id => $army_id,
+      name    => $army_name,
+      dt      => $dt,
+      new     => $sha1,
+      old     => $old_sha1,
+      opid    => $clone_data->{opid}
+   });
 }
 
 sub buy_army {
@@ -1507,6 +1518,20 @@ sub update_program_files {
          $result->{ catfile (@local_file) } = undef;
       }
    }
+   return $result;
+}
+
+sub rating {
+   my $mapid = shift;
+
+   my $result = {};
+
+   my @cache = grep { $_->{mapid} == $mapid } list_castles ();
+
+   $result->{gold}  = [ ((sort {$a->{gold}  <=> $a->{gold} } @cache)[0 .. 19]) ];
+
+   $result->{power} = [ ((sort {$a->{power} <=> $a->{power}} @cache)[0 .. 19]) ];
+
    return $result;
 }
 

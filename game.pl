@@ -207,6 +207,11 @@ any '/global/:select' => sub {
       $params->{points}  = Decline::get_points ();
       $params->{address} = $address;
    }
+   elsif ($select eq 'rating') {
+
+      $params->{mapid}  = ($c->param ('map') || 1);
+      $params->{rating} = Decline::rating ($params->{mapid});
+   }
 
 
    $c->stash (hash => $hash, castle => undef, select => $select, key => $key, params => $params);

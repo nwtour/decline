@@ -1,4 +1,45 @@
 % extends 'template';
 % content header => begin
 
+  <center>
+
+% foreach my $mapid (1 .. 2) {
+%==  ($mapid == $params->{mapid} ? '' : "<a href=\"/global/rating/?map=$mapid\">")
+     Карта <%= $mapid %>00x<%= $mapid %>00
+%==  ($mapid == $params->{mapid} ? '' : "</a>")
+% }
+
+  <h1>20-ка богатейших замков</h1><br>
+  <table width="80%" border="1" bgcolor="#ffff99">
+  <tr bgcolor="#dddd00">
+     <td><b>№</b></td><td><b>Замок</b></td><td><b>Владелец</b></td><td><b>Золота</b></td>
+  </tr>
+% foreach my $seq (1 .. 20) {
+
+%    my $castle = $params->{rating}{gold}[($seq - 1)];
+
+%    next unless defined $castle;
+     <tr>
+        <td><%= $seq %></td><td><%= $castle->{id} %></td><td><%= $castle->{key} %></td><td><%= $castle->{gold} %></td>
+     </tr>
+% }
+  </table>
+
+  <h1>20-ка сильнейших замков</h1><br>
+  <table width="80%" border="1" bgcolor="#ffff99">
+  <tr bgcolor="#dddd00">
+     <td><b>№</b></td><td><b>Замок</b></td><td><b>Владелец</b></td><td><b>Общая сила</b></td>
+  </tr>
+% foreach my $seq (1 .. 20) {
+
+%    my $castle = $params->{rating}{power}[($seq - 1)];
+
+%    next unless defined $castle;
+     <tr>
+        <td><%= $seq %></td><td><%= $castle->{id} %></td><td><%= $castle->{key} %></td><td><%= $castle->{power} %></td>
+     </tr>
+% }
+  </table>
+
+  </center>
 % end
