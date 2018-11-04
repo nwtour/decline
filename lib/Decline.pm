@@ -15,6 +15,7 @@ use LWP::Protocol::https;
 use Archive::Zip;
 use File::stat;
 use File::Copy qw(copy);
+use File::Basename qw(basename);
 
 our $decline_dir;
 our $version = 1;
@@ -130,6 +131,63 @@ sub gpg_add_key {
    return $rc;
 }
 
+sub kingdom_json_file {
+   my $extention = shift;
+
+   return catfile (get_decline_dir (), 'data', join ('', 'kingdom.json', ($extention || '')));
+}
+
+sub castle_state_file {
+   my ($castle_id, $extention) = @_;
+
+   die "invalid usage\n" unless $castle_id;
+
+   return catfile (get_decline_dir (), 'data', $castle_id, join ('', 'state.json', ($extention || '')));
+}
+
+sub rollback_save_state {
+   my $castle_id = shift;
+
+   my $result = [
+      {
+         source => kingdom_json_file (),
+         bak    => kingdom_json_file ('.bak'),
+         sha1   => sha1_hex_file (kingdom_json_file ())
+      },
+      {
+         source => castle_state_file ($castle_id),
+         bak    => castle_state_file ($castle_id, '.bak'),
+         sha1   => sha1_hex_file (castle_state_file ($castle_id))
+      },
+   ];
+
+   return $result;
+}
+
+sub rollback_restore {
+   my ($saved_state, $source, $signature) = @_;
+
+   die "Bad rollback_state\n" if ref ($saved_state) ne 'ARRAY';
+
+   foreach my $file (@{$saved_state}) {
+
+      my $sha1_bak = sha1_hex_file ($file->{bak});
+      if ($file->{sha1} eq sha1_hex_file ($file->{bak})) {
+
+         if (! copy ($file->{bak}, $file->{source})) {
+
+            warn $file->{bak} . " failed copy $!\n";
+         }
+         warn $file->{source} . " restored\n";
+         next;
+      }
+      warn $file->{source} . " " . $file->{sha1} . "<=> $sha1_bak error restore!\n";
+   }
+   unlink ($source);
+   unlink ($signature);
+   return "rollback operation " . basename ($source);
+}
+
 sub gpg_create_signature {
    my ($source, $signature) = @_;
 
@@ -144,7 +202,8 @@ sub gpg_create_signature {
       '--detach-sig',
       $source
    );
-   warn "gpg_create_signature $source -> $signature failed\n" if $?;
+   warn "gpg_create_signature $source -> $signature failed: $?\n" if $?;
+   return ($rc ? ($rc == -1 ? "failed to execute GPG $!" : "GPG runtime error $?") : 0);
 }
 
 sub gpg_verify_signature {
@@ -520,7 +579,12 @@ sub write_op {
 sub write_castle_state {
    my ($json, $castle_id) = @_;
 
-   if (open (FILE, '>', catfile (get_decline_dir (), 'data', $castle_id, 'state.json'))) {
+   if (! copy (castle_state_file ($castle_id), castle_state_file ($castle_id, '.bak'))) {
+
+      warn "Unable state.json backup file ($castle_id)\n";
+   }
+
+   if (open (FILE, '>', castle_state_file ($castle_id))) {
 
       print FILE $json;
       close (FILE);
@@ -538,7 +602,13 @@ sub write_kingdom_state {
       $result->{ $castle->{id} } = $sha1;
    }
    my $json = get_json ($result);
-   if (open (FILE, '>', catfile (get_decline_dir (), 'data', 'kingdom.json'))) {
+
+   if (! copy (kingdom_json_file (), kingdom_json_file ('.bak'))) {
+
+      warn "Unable kingdom.json backup file\n";
+   }
+
+   if (open (FILE, '>', kingdom_json_file ())) {
 
       print FILE $json;
       close (FILE);
@@ -572,9 +642,8 @@ sub create_new_coord {
 
 sub load_castle {
    my $castle_id = shift;
-   my $file_path = catfile (get_decline_dir (), 'data', $castle_id, 'state.json');
 
-   return load_json ($file_path);
+   return load_json (castle_state_file ($castle_id));
 }
 
 sub is_my_castle {
@@ -745,15 +814,17 @@ sub buy_army {
       $dt  = get_utc_time ();
    }
 
+   my $rollback = rollback_save_state ($castle_id);
+
    my ($rc, @data) = unauthorised_buy_army ({
-      id => $castle_id,
-      dt => $dt,
+      id      => $castle_id,
+      dt      => $dt,
       army_id => $dt . $mcs,
-      name => $army_name
+      name    => $army_name
    });
 
    return $data[0] if $rc;
-   gpg_create_signature (@data);
+   return rollback_restore ($rollback, @data) if gpg_create_signature (@data);
    return 0;
 }
 
@@ -841,6 +912,8 @@ sub unauthorised_move_army {
 sub move_army {
    my ($castle_id, $aid, $direction) = @_;
 
+   my $rollback = rollback_save_state ($castle_id);
+
    my ($rc, @data) = unauthorised_move_army ({
       id        => $castle_id,
       dt        => get_utc_time (),
@@ -849,7 +922,7 @@ sub move_army {
    });
 
    return $data[0] if $rc;
-   gpg_create_signature (@data);
+   return rollback_restore ($rollback, @data) if gpg_create_signature (@data);
    return 0;
 }
 
@@ -928,6 +1001,7 @@ sub increase_population {
    $population = int ($population / 50);
    $population = 1 unless $population;
 
+   my $rollback = rollback_save_state ($castle_ref->{id});
    my ($rc, @data) = unauthorised_increase_population ({
       id                  => $castle_ref->{id},
       dt                  => $dt,
@@ -935,7 +1009,10 @@ sub increase_population {
       population_increase => $population,
    });
    warn $data[0] . "\n" if $rc;
-   gpg_create_signature (@data) if ! $rc;
+   if (! $rc && gpg_create_signature (@data)) {
+
+      return rollback_restore ($rollback, @data);
+   }
 }
 
 sub increase_movement {
@@ -967,6 +1044,7 @@ sub increase_movement {
    $clone_data->{opid} = op_stringification (++$clone_data->{opid});
    my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
    my ($json, $sha1) = get_json_and_sha1 ($clone_data);
+   my $rollback = rollback_save_state ($castle_ref->{id});
    my ($rc, @data) = atomic_write_data ($castle_ref->{id}, $json, {
       op   => 'unauthorised_increase_movement',
       data => $ops,
@@ -976,8 +1054,11 @@ sub increase_movement {
       opid => $clone_data->{opid}
    });
 
-   warn $data[0] . "\n" if $rc;
-   gpg_create_signature (@data) if ! $rc;
+   return $data[0] if $rc;
+   if (my $err = gpg_create_signature (@data)) {
+
+      return join (' ', $err, rollback_restore ($rollback, @data));
+   }
 }
 
 sub increase_keepalive {
@@ -1018,12 +1099,18 @@ sub local_update_castle {
 
          if ($datetime->hour_1() == $castlehr->{stepdt}) {
 
-            increase_movement ($castlehr, $basedt);
+            if (my $err = increase_movement ($castlehr, $basedt)) {
+
+               return "increase_movement : $err";
+            }
             $castlehr = load_castle ($castlehr->{id});
          }
          if (! ($datetime->hour_1() % 3)) {
 
-            increase_population ($castlehr, $basedt);
+            if (my $err = increase_population ($castlehr, $basedt)) {
+
+               return "increase_population : $err";
+            }
             $castlehr = load_castle ($castlehr->{id});
          }
          $basedt += (30*60);
@@ -1041,7 +1128,10 @@ sub local_updates {
    my $key = get_key_id ();
    foreach my $castlehr (list_my_castles ($key)) {
 
-      local_update_castle ($castlehr);
+      if (my $err = local_update_castle ($castlehr)) {
+
+         return $err;
+      }
       return if $dt < (get_utc_time () - 2);
    }
 }
@@ -1115,7 +1205,7 @@ sub sync_castle {
 
    if ($res1->code !~ /^(2|3)/ || $res2->code !~ /^(2|3)/) {
 
-      my $real_sha1 = sha1_hex_file (catfile (get_decline_dir (), 'data', $castle_id, 'state.json'));
+      my $real_sha1 = sha1_hex_file (castle_state_file ($castle_id));
       if ($real_sha1 ne $needed_sha1) {
 
          warn "Not found next file $file (but kingdom incomplete) $real_sha1 $needed_sha1\n";
@@ -1146,7 +1236,7 @@ sub sync_castle {
    unlink ($sig_file);
    unlink ($json_file);
 
-   my $real_sha1 = sha1_hex_file (catfile (get_decline_dir (), 'data', $castle_id, 'state.json'));
+   my $real_sha1 = sha1_hex_file (castle_state_file ($castle_id));
 
    if ($real_sha1 eq $oplog_sha1) {
 
@@ -1189,10 +1279,10 @@ sub sync_castles {
          next;
       }
 
-      next if (Decline::sha1_hex_file (catfile (get_decline_dir (), 'data', 'remote', "$p.kingdom.json")) eq
-               Decline::sha1_hex_file (catfile (get_decline_dir (), 'data', "kingdom.json")));
+      next if ( Decline::sha1_hex_file (kingdom_json_file ()) eq
+                Decline::sha1_hex_file (catfile (get_decline_dir (), 'data', 'remote', "$p.kingdom.json")));
 
-      my $old_struct = Decline::load_json (catfile (get_decline_dir (), 'data', "kingdom.json"));
+      my $old_struct = Decline::load_json (kingdom_json_file ());
       my $new_struct = Decline::load_json (catfile (get_decline_dir (), 'data', 'remote', "$p.kingdom.json"));
 
       die "Bad keys.json\n" if ref ($new_struct) ne 'HASH';
@@ -1201,7 +1291,7 @@ sub sync_castles {
       foreach my $k (keys %{$new_struct}) {
 
          # sha1 in kingdom.json == state.json: kingdom.json incomplete another side
-         next if $new_struct->{$k} eq sha1_hex_file (catfile (get_decline_dir (), 'data', $k, 'state.json'));
+         next if $new_struct->{$k} eq sha1_hex_file (castle_state_file ($k));
 
          if (my $dt = Decline::sync_castle ((exists $old_struct->{$k} ? "update" : "create"), $k, $p, $new_struct->{$k})) {
 
@@ -1309,7 +1399,10 @@ sub remote_updates {
 
 sub get_updates {
 
-   local_updates  ();
+   if (my $err = local_updates ()) {
+
+      return $err;
+   }
    my $dt = remote_updates ();
    return $dt;
 }

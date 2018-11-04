@@ -21,7 +21,14 @@ function loadPage() {
       <a href="/">
          <img src="/static/logo.jpg" alt="" border="0" id="logo">
       </a><br>
+%     my $changed = 0;
 %     foreach my $s (sort {$hash->{$a}{in_castle} <=> $hash->{$b}{in_castle} || $hash->{$a}{id} <=> $hash->{$b}{id}} keys %{ $hash }) {
+
+%        if ($changed != $hash->{$s}{in_castle}) {
+
+            <br><br>
+%        }
+%        $changed = $hash->{$s}{in_castle};
 
 %        if (defined $castle && $hash->{$s}{in_castle} && $s ne $select) {
             <a href="/public/<%= $s %>/<%= $castle->{id} %>"><%= $hash->{$s}{ru} %></a><br>

@@ -121,7 +121,8 @@ any '/public/update' => sub {
       if (my $dt = Decline::get_updates ()) {
 
          Decline::unlock_data ("update");
-         return $c->render (text => scalar (localtime ($dt)));
+         $dt = scalar (localtime ($dt)) if $dt =~ /^\d+$/;
+         return $c->render (text => $dt);
       }
       Decline::unlock_data ("update");
    }
