@@ -11,11 +11,13 @@ BEGIN {
 }
 
 use strict;
+use utf8;
+use warnings 'all';
+
 use Mojo::JSON qw(decode_json encode_json);
 use Mojolicious::Lite;
 use File::Spec::Functions qw(catfile);
 use Decline;
-use utf8;
 
 $Decline::decline_dir = cwd;
 

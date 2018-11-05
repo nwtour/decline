@@ -2,6 +2,7 @@ package Decline;
 
 use strict;
 use utf8;
+use warnings "all";
 
 use File::Spec::Functions qw(catfile);
 use DateTime;
@@ -17,6 +18,7 @@ use File::Copy qw(copy);
 use File::Basename qw(basename);
 use Crypt::Digest::SHA1 qw(sha1_hex sha1_file_hex);  # package CryptX
 use Crypt::PK::RSA;                                  # package CryptX
+use Storable qw(dclone);
 
 our $decline_dir;
 our $version = 1;
@@ -58,16 +60,17 @@ sub create_directory_tree {
          mkdir (catfile ($d, 'data', $castle_id, $subdir));
       }
    }
+   return 1;
 }
 
 sub write_file_slurp {
    my ($data, $path, $binmode) = @_;
 
-   if (open (FILE, '>', $path)) {
+   if (open (my $file, '>', $path)) {
 
-      binmode (FILE) if $binmode;
-      print FILE $data;
-      close (FILE);
+      binmode ($file) if $binmode;
+      print {$file} $data;
+      close ($file);
       return 0;
    }
    return 1;
@@ -77,11 +80,11 @@ sub read_file_slurp {
    my ($path, $binmode) = @_;
    my $result = '';
 
-   if (open (FILE, '<', $path)) {
+   if (open (my $file, '<', $path)) {
 
-      binmode (FILE) if $binmode;
-      $result .= $_ while (<FILE>);
-      close (FILE);
+      binmode ($file) if $binmode;
+      $result .= $_ while (<$file>);
+      close ($file);
    }
    return $result;
 }
@@ -193,9 +196,9 @@ sub lock_data {
       }
    }
 
-   return undef if -f $lockfile;
+   return 0 if -f $lockfile;
 
-   return (write_file_slurp ($$, $lockfile) ? undef : 1);
+   return (write_file_slurp ($$, $lockfile) ? 0 : 1);
 }
 
 sub unlock_data {
@@ -204,6 +207,7 @@ sub unlock_data {
    my $lockfile = catfile (get_decline_dir (), 'data', ($file || "file" ) . '.lck');
 
    unlink ($lockfile) if -e $lockfile;
+   return 1;
 }
 
 sub keys_json_file {
@@ -211,14 +215,6 @@ sub keys_json_file {
    create_directory_tree ();
 
    return catfile (get_decline_dir (), 'data', 'keys.json');
-}
-
-sub clone_data {
-   my $ref = shift;
-   my $VAR1;
-
-   my $new_ref = eval (Data::Dumper::Dumper($ref));
-   return $new_ref;
 }
 
 sub make_sorted_data {
@@ -232,7 +228,7 @@ sub make_sorted_data {
       my $hr = $hashref->{ $sorted_keys[$i] };
       if (ref ($hr) eq 'HASH') {
 
-         $hr = clone_data ($hr);
+         $hr = dclone ($hr);
          $hr = make_sorted_data ($hr);
       }
 
@@ -254,7 +250,7 @@ sub save_keys_json {
    my $result = shift;
 
    my $json = get_json ($result);
-   write_file_slurp (get_json ($result), keys_json_file ());
+   return write_file_slurp (get_json ($result), keys_json_file ());
 }
 
 sub set_key_attribute {
@@ -264,7 +260,7 @@ sub set_key_attribute {
 
    $result->{$key}{$attribute} = $value;
 
-   save_keys_json ($result);
+   return save_keys_json ($result);
 }
 
 sub get_points {
@@ -283,7 +279,7 @@ sub set_point_attribute {
 
    my $j = get_json ($network);
 
-   write_file_slurp ($j, catfile (get_decline_dir (), 'data', 'points.json'));
+   return write_file_slurp ($j, catfile (get_decline_dir (), 'data', 'points.json'));
 }
 
 sub get_my_address {
@@ -293,7 +289,7 @@ sub get_my_address {
 
       return $point if $hashref->{$point}{self};
    }
-   return undef;
+   return '';
 }
 
 sub init_keys_json {
@@ -317,7 +313,7 @@ sub init_keys_json {
          $result->{$key}{type} = '-';
       }
    }
-   save_keys_json ($result);
+   return save_keys_json ($result);
 }
 
 sub get_keys {
@@ -333,6 +329,7 @@ sub get_key_id {
 
       return $k if $result->{$k}{type} eq 'u';
    }
+   return '';
 }
 
 sub key_for_point {
@@ -369,7 +366,7 @@ sub create_new_key {
       $dest . '.public',
       catfile (get_decline_dir (), 'data', sha1_file_hex ( $dest . '.public' ) . '.asc')
    );
-   init_keys_json ();
+   return init_keys_json ();
 }
 
 sub get_utc_hour {
@@ -408,7 +405,7 @@ sub part_json {
       my $val = $k->[1];
       if (ref ($val) eq 'ARRAY') {
 
-         $val = clone_data ($val);
+         $val = dclone ($val);
          $val = part_json ($val);
       }
       $hash_ref->{ $k->[0] } = $val;
@@ -470,6 +467,12 @@ sub write_op {
    return (0, $path_to_file, catfile ($full_dir, $file . '.sig'));
 }
 
+sub load_castle {
+   my $castle_id = shift;
+
+   return load_json (castle_state_file ($castle_id));
+}
+
 sub write_castle_state {
    my ($json, $castle_id) = @_;
 
@@ -479,8 +482,16 @@ sub write_castle_state {
    }
 
    write_file_slurp ($json, castle_state_file ($castle_id));
-   undef ($geo_index);
-   $geo_index = {};
+
+   my $castle_ref = load_castle ($castle_id);
+
+   if (ref ($castle_ref) eq 'HASH' && defined $castle_ref->{mapid}) {
+
+      delete $geo_index->{ $castle_ref->{mapid} };
+      return 1;
+   }
+
+   return 0;
 }
 
 sub write_kingdom_state {
@@ -497,7 +508,7 @@ sub write_kingdom_state {
       warn "Unable kingdom.json backup file $!\n";
    }
 
-   write_file_slurp (get_json ($result), kingdom_json_file ());
+   return write_file_slurp (get_json ($result), kingdom_json_file ());
 }
 
 sub atomic_write_data {
@@ -523,12 +534,6 @@ sub atomic_write_data {
 sub create_new_coord {
 
    return (int (rand (100)), int (rand (100)), 1);   
-}
-
-sub load_castle {
-   my $castle_id = shift;
-
-   return load_json (castle_state_file ($castle_id));
 }
 
 sub is_my_castle {
@@ -610,7 +615,7 @@ sub unauthorised_create_castle {
       laststep   => $dt,
       opid       => '0000000',
    };
-   my $op_data = clone_data ($data);
+   my $op_data = dclone ($data);
    my ($json, $sha1) = get_json_and_sha1 ($data);
    my (undef, $old_sha1) = get_json_and_sha1 ({});
    $op_data->{op} = "unauthorised_create_castle";
@@ -663,8 +668,8 @@ sub unauthorised_buy_army {
    return (1, "Not enought population") if $castle_ref->{population} < 10;
    return (1, "Internal error: key exists") if exists $castle_ref->{army}{$army_id};
 
-   my $clone_data = clone_data ($castle_ref);
-   return (1, "Internal error: $@") if ! exists $clone_data->{mapid};
+   my $clone_data = dclone ($castle_ref);
+   return (1, "Serialization error: $@") if ! exists $clone_data->{mapid};
    $clone_data->{gold}       -= $army->{$army_name}{1}{cost};
    $clone_data->{population} -= 10;
    $clone_data->{power}      += $army->{$army_name}{1}{cost};
@@ -767,7 +772,8 @@ sub has_move_army {
 }
 
 sub has_move_army2 {
-   my ($rc) = has_move_army (@_);
+   my @list = @_;
+   my ($rc) = has_move_army (@list);
    return $rc;
 }
 
@@ -784,7 +790,7 @@ sub unauthorised_move_army {
 
    my $castle_ref = load_castle ($castle_id);
 
-   my $clone_data = clone_data ($castle_ref);
+   my $clone_data = dclone ($castle_ref);
    return (1, "Internal error: $@") if ! exists $clone_data->{mapid};
    $clone_data->{army}{$army_id}{movement}--;
 
@@ -823,18 +829,24 @@ sub move_army {
 }
 
 sub load_geo_index {
+   my $mapid = shift;
 
+   my $i = 0;
    foreach my $castlehr (list_castles ()) {
+
+      next if $castlehr->{mapid} ne $mapid;
 
       foreach my $aid (keys %{$castlehr->{army}}) {
 
-         $geo_index->{ $castlehr->{mapid} }{ $castlehr->{army}{$aid}{x} }{ $castlehr->{army}{$aid}{y} }
+         $geo_index->{$mapid}{ $castlehr->{army}{$aid}{x} }{ $castlehr->{army}{$aid}{y} }
             = [$castlehr->{army}{$aid}{name}, $castlehr->{id}, $aid];
+         $i++;
       }
 
-      $geo_index->{ $castlehr->{mapid} }{ $castlehr->{x} }{ $castlehr->{y} }
+      $geo_index->{$mapid}{ $castlehr->{x} }{ $castlehr->{y} }
          = ["tower1", $castlehr->{id}];
    }
+   return $i;
 }
 
 sub picture_by_coord {
@@ -842,7 +854,7 @@ sub picture_by_coord {
 
    if (! exists $geo_index->{$mapid}) {
 
-      load_geo_index ();
+      load_geo_index ($mapid);
    }
 
    return "0" if $x < 0;
@@ -861,7 +873,7 @@ sub unauthorised_increase_population {
    my $struct = shift;
 
    my $castle_ref = load_castle ($struct->{id});
-   my $clone_data = clone_data ($castle_ref);
+   my $clone_data = dclone ($castle_ref);
    $clone_data->{laststep}            = $struct->{dt};
    $clone_data->{gold_increase}       = sprintf ("%.2f", $struct->{gold_increase});
    $clone_data->{population_increase} = $struct->{population_increase};
@@ -914,7 +926,7 @@ sub increase_population {
 sub increase_movement {
    my ($castle_ref, $dt) = @_;
 
-   my $clone_data = clone_data ($castle_ref);
+   my $clone_data = dclone ($castle_ref);
 
    my $ops = {};
    foreach my $arm_id (keys %{$clone_data->{army}}) {
@@ -961,6 +973,7 @@ sub increase_keepalive {
    my ($castle_ref, $dt) = @_;
 
    # TODO keepalive
+   return 0;
 }
 
 sub local_update_castle {
@@ -971,7 +984,7 @@ sub local_update_castle {
 
    my $basedt = ($castlehr->{laststep} > $castlehr->{dt} ? $castlehr->{laststep} : $castlehr->{dt});
 
-   die "Error laststep > current date\n" if $basedt > $dt;
+   return "Error laststep > current date" if $basedt > $dt;
 
    $basedt += 1;
 
@@ -1016,6 +1029,7 @@ sub local_update_castle {
          $basedt += 60;
       }
    }
+   return '';
 }
 
 sub local_updates {
@@ -1028,8 +1042,9 @@ sub local_updates {
 
          return $err;
       }
-      return if $dt < (get_utc_time () - 2);
+      return '' if $dt < (get_utc_time () - 2);
    }
+   return '';
 }
 
 sub gen_address {
@@ -1208,6 +1223,7 @@ sub sync_keys {
    $ua->timeout (20);
 
    create_directory_tree ();
+   my $count = 0;
 
    foreach my $p (keys %{$points}) {
 
@@ -1233,7 +1249,11 @@ sub sync_keys {
       my $old_struct = Decline::load_json (catfile (get_decline_dir (), 'data', 'keys.json'));
       my $new_struct = Decline::load_json (catfile (get_decline_dir (), 'data', 'remote', "$p.keys.json"));
 
-      die "Bad keys.json\n" if ref ($new_struct) ne 'HASH';
+      if (ref ($new_struct) ne 'HASH') {
+
+         warn "Bad downloaded data/remote/$p.keys.json\n";
+         next;
+      }
 
       foreach my $k (keys %{$new_struct}) {
 
@@ -1250,7 +1270,7 @@ sub sync_keys {
                Decline::init_keys_json ();
                Decline::set_key_attribute ($k, 'address', $new_struct->{$k}{address});
                Decline::set_point_attribute ($new_struct->{$k}{address}, 'self', 0);
-               # TODO verify key (email)
+               $count++;
             }
             else {
 
@@ -1260,12 +1280,13 @@ sub sync_keys {
          }
       }
    }
+   return $count++;
 }
 
 sub prepare_points {
 
    my $points = get_points ();
-
+   my $i = 0;
    foreach my $p (keys %{$points}) {
 
       next if $p eq get_my_address ();
@@ -1280,12 +1301,14 @@ sub prepare_points {
       Decline::set_point_attribute ($p, 'checkdt', Decline::get_utc_time ());
 
       my $r = Mojo::UserAgent->new->max_redirects(0)->connect_timeout(5)->request_timeout(10)->inactivity_timeout(10)->get ($url . '/keys.json');
-      if ($r->res->code == 200) {
+      if ($r->res->code && $r->res->code == 200) {
 
          warn "$url IS LIVE\n";
          Decline::set_point_attribute ($p, 'livedt', Decline::get_utc_time ());
+         $i++;
       }
    }
+   return $i;
 }
 
 sub remote_updates {
