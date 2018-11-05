@@ -6,7 +6,10 @@
       <tr><td colspan="2">
 %        if ($params->{hour}) {
             <br>
-            <a href="/create/castle/<%= $params->{hour} %>">Создать замок (время перехода <%= $params->{hour} %>:00)</a><br>
+            Новый замок.
+            Время перехода хода: <%= $params->{hour} %>:00.
+            Карта: <%= $params->{next_map_id} %>00x<%= $params->{next_map_id} %>00<br>
+            <a href="/create/castle/<%= $params->{hour} %>">СОЗДАТЬ</a><br>
             <br>
 %        }
 %        elsif ($params->{restrict}) {

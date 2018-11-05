@@ -3,7 +3,7 @@
 
   <center>
 
-% foreach my $mapid (1 .. 2) {
+% foreach my $mapid (1 .. $params->{max_map_id}) {
 %==  ($mapid == $params->{mapid} ? '' : "<a href=\"/global/rating/?map=$mapid\">")
      Карта <%= $mapid %>00x<%= $mapid %>00
 %==  ($mapid == $params->{mapid} ? '' : "</a>")

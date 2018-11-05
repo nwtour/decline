@@ -1,7 +1,7 @@
 % extends 'template';
 % content header => begin
 <div class="base" id="base">
-%  foreach my $mapid (1 .. 2) {
+%  foreach my $mapid (1 .. $params->{max_map_id}) {
       <h1>Карта <%= $mapid %> (<%= $mapid %>00x<%= $mapid %>00)</h1><br>
 
 % # TODO RTFM object should be scaling (not croping)

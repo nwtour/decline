@@ -176,6 +176,7 @@ any '/global/:select' => sub {
       $params->{hour}     = $c->param ('hour');
       $params->{restrict} = Decline::restrict_new_castle ($key);
       $params->{list}     = [ Decline::list_my_castles ($key) ];
+      (undef, undef, $params->{next_map_id}) = Decline::generate_free_coord ();
    }
    elsif ($select eq 'settings') {
 
@@ -201,10 +202,14 @@ any '/global/:select' => sub {
    }
    elsif ($select eq 'rating') {
 
-      $params->{mapid}  = ($c->param ('map') || 1);
-      $params->{rating} = Decline::rating ($params->{mapid});
+      $params->{mapid}      = ($c->param ('map') || 1);
+      $params->{rating}     = Decline::rating ($params->{mapid});
+      $params->{max_map_id} = Decline::get_max_map_id ();
    }
+   elsif ($select eq 'kingdom') {
 
+      $params->{max_map_id} = Decline::get_max_map_id ();
+   }
 
    $c->stash (hash => $hash, castle => undef, select => $select, key => $key, params => $params);
 

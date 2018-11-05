@@ -21,7 +21,8 @@ use Crypt::PK::RSA;                                  # package CryptX
 use Storable qw(dclone);
 
 our $decline_dir;
-our $version = 1;
+our $VERSION = 1;
+our $max_map_id = 0;
 
 my $geo_index = {};
 
@@ -96,15 +97,25 @@ sub op_stringification {
    return "$op";
 }
 
-sub gpg_add_key {
+sub add_key {
    my ($path, $key_id) = @_;
 
    my $destination = catfile (get_decline_dir (), 'data', "$key_id.asc");
-   if (! -e $destination) {
+   if (-e $destination) {
 
-      copy ($path, $destination);
+      return 1;
    }
-   return 0;
+   elsif (-f $path && sha1_file_hex ($path) eq $key_id) {
+
+      if (! copy ($path, $destination)) {
+
+         warn "failed copy $path to $destination: $!\n";
+         return 2;
+      }
+      return 0;
+   }
+   return 3 if ! -f $path;
+   return 4;
 }
 
 sub kingdom_json_file {
@@ -364,7 +375,7 @@ sub create_new_key {
    unlink (keys_json_file ());
    copy (
       $dest . '.public',
-      catfile (get_decline_dir (), 'data', sha1_file_hex ( $dest . '.public' ) . '.asc')
+      catfile (get_decline_dir (), 'data', sha1_file_hex ($dest . '.public') . '.asc')
    );
    return init_keys_json ();
 }
@@ -494,6 +505,30 @@ sub write_castle_state {
    return 0;
 }
 
+# TODO cache
+sub list_castles {
+   my @list;
+   foreach my $dir (glob (catfile (get_decline_dir (), 'data') . "/*")) {
+
+      next if ! -d $dir;
+      next if ! -e catfile ($dir, 'state.json');
+      if ($dir =~ /(\d+)$/) {
+
+         my $castle_ref = load_castle ($1);
+         $max_map_id = $castle_ref->{mapid} if defined ($castle_ref->{mapid}) && $castle_ref->{mapid} > $max_map_id;
+         push @list, $castle_ref;
+      }
+   }
+   return @list;
+}
+
+sub get_max_map_id {
+
+   return $max_map_id if $max_map_id;
+   list_castles ();
+   return $max_map_id;
+}
+
 sub write_kingdom_state {
 
    my $result = {};
@@ -530,12 +565,6 @@ sub atomic_write_data {
    return (1, "DATA directory locked");
 }
 
-# TODO
-sub create_new_coord {
-
-   return (int (rand (100)), int (rand (100)), 1);   
-}
-
 sub is_my_castle {
    my ($key, $castle) = @_;
 
@@ -545,25 +574,30 @@ sub is_my_castle {
    return 1;
 }
 
-sub list_castles {
-   my @list;
-   foreach my $dir (glob (catfile (get_decline_dir (), 'data') . "/*")) {
-
-      next if ! -d $dir;
-      next if ! -e catfile ($dir, 'state.json');
-      if ($dir =~ /(\d+)$/) {
-
-         push @list, load_castle ($1);
-      }
-   }
-   return @list;
-}
-
 sub list_my_castles {
    my $key = shift;
 
    my @list = grep {$_->{key} eq $key} list_castles ();
    return @list;
+}
+
+# Create random coordinates and return current MapId for new castle.
+sub create_new_coord {
+   my $plus = shift;
+
+   my $cnt = scalar (list_my_castles (get_key_id ()));
+
+   foreach my $cm (1 .. 100) {
+
+      my $limit = $cm * $cm; # 1 4 9 16 25 36 49 64
+
+      next if $cnt >= $limit;
+
+      $cm += $plus; # If on current map high density
+      return (int (rand ($cm * 100)), int (rand ($cm * 100)), $cm);
+   }
+   warn "Internal error, cannot create new coord\n";
+   return (0, 0, 0);
 }
 
 sub restrict_new_castle {
@@ -624,6 +658,85 @@ sub unauthorised_create_castle {
    return atomic_write_data ($castle_id, $json, $op_data);
 }
 
+sub load_geo_index {
+   my $mapid = shift;
+
+   my $i = 0;
+   foreach my $castlehr (list_castles ()) {
+
+      next if $castlehr->{mapid} ne $mapid;
+
+      foreach my $aid (keys %{$castlehr->{army}}) {
+
+         $geo_index->{$mapid}{ $castlehr->{army}{$aid}{x} }{ $castlehr->{army}{$aid}{y} }
+            = [$castlehr->{army}{$aid}{name}, $castlehr->{id}, $aid];
+         $i++;
+      }
+
+      $geo_index->{$mapid}{ $castlehr->{x} }{ $castlehr->{y} }
+         = ["tower1", $castlehr->{id}];
+   }
+   return $i;
+}
+
+sub picture_by_coord {
+   my ($mapid, $x, $y) = @_;
+
+   if (! exists $geo_index->{$mapid}) {
+
+      load_geo_index ($mapid);
+   }
+
+   return "0" if $x < 0;
+   return "0" if $y < 0;
+
+   return "0" if $x > ($mapid * 100);
+   return "0" if $y > ($mapid * 100);
+
+   return "5" if ! exists $geo_index->{$mapid}{$x};
+   return "5" if ! exists $geo_index->{$mapid}{$x}{$y};
+
+   return $geo_index->{$mapid}{$x}{$y};
+}
+
+sub is_free_coord {
+   my @list = @_;
+
+   my $r = picture_by_coord (@list);
+
+   return 1 if ! ref ($r) && $r eq "5";
+   return 0;
+}
+
+sub generate_free_coord {
+
+   foreach my $plus (0 .. 10) {
+
+      foreach (1 .. 100) {
+
+         my ($x, $y, $mapid) = create_new_coord ($plus);
+
+         next if ! is_free_coord ($mapid,       $x,  $y     );
+         next if ! is_free_coord ($mapid, ($x + 1),  $y     );
+         next if ! is_free_coord ($mapid, ($x - 1),  $y     );
+
+         next if ! is_free_coord ($mapid,       $x, ($y - 1));
+         next if ! is_free_coord ($mapid, ($x + 1), ($y - 1));
+         next if ! is_free_coord ($mapid, ($x - 1), ($y - 1));
+
+         next if ! is_free_coord ($mapid,       $x, ($y + 1));
+         next if ! is_free_coord ($mapid, ($x + 1), ($y + 1));
+         next if ! is_free_coord ($mapid, ($x - 1), ($y + 1));
+
+         return ($x, $y, $mapid);
+      }
+      warn "generate_free_coord: 100 tries failed. Detect High Density. Go to next map\n";
+   }
+   warn "generate_free_coord failed! 100 map busy!!!!!\n";
+
+   return (0, 0, 0);
+}
+
 sub create_new_castle {
    my ($key, $hour) = @_;
 
@@ -634,7 +747,8 @@ sub create_new_castle {
       last if ! -d catfile (get_decline_dir (), 'data', $castle_id);
    }
    my $dt = get_utc_time ();
-   my ($x, $y, $mapid) = create_new_coord ();
+   my ($x, $y, $mapid) = generate_free_coord ();
+   return 0 if ! $mapid;
    my $stepdt = $hour - localtimezone_offset ();
    $stepdt += 24 if $stepdt < 0;
    my ($rc, @data) = unauthorised_create_castle ({
@@ -826,47 +940,6 @@ sub move_army {
    return $data[0] if $rc;
    return rollback_restore ($rollback, @data) if gpg_create_signature (@data);
    return 0;
-}
-
-sub load_geo_index {
-   my $mapid = shift;
-
-   my $i = 0;
-   foreach my $castlehr (list_castles ()) {
-
-      next if $castlehr->{mapid} ne $mapid;
-
-      foreach my $aid (keys %{$castlehr->{army}}) {
-
-         $geo_index->{$mapid}{ $castlehr->{army}{$aid}{x} }{ $castlehr->{army}{$aid}{y} }
-            = [$castlehr->{army}{$aid}{name}, $castlehr->{id}, $aid];
-         $i++;
-      }
-
-      $geo_index->{$mapid}{ $castlehr->{x} }{ $castlehr->{y} }
-         = ["tower1", $castlehr->{id}];
-   }
-   return $i;
-}
-
-sub picture_by_coord {
-   my ($mapid, $x, $y) = @_;
-
-   if (! exists $geo_index->{$mapid}) {
-
-      load_geo_index ($mapid);
-   }
-
-   return "0" if $x < 0;
-   return "0" if $y < 0;
-
-   return "0" if $x > ( $mapid * 100);
-   return "0" if $y > ( $mapid * 100);
-
-   return "5" if ! exists $geo_index->{$mapid}{$x};
-   return "5" if ! exists $geo_index->{$mapid}{$x}{$y};
-
-   return $geo_index->{$mapid}{$x}{$y};
 }
 
 sub unauthorised_increase_population {
@@ -1110,7 +1183,7 @@ sub sync_castle {
 
    warn "Castle $castle_id : $type ($file)\n";
    my $json_file = catfile (get_decline_dir (), 'tmp', "$file.json");
-   my $sig_file = catfile (get_decline_dir (), 'tmp', "$file.sig");
+   my $sig_file  = catfile (get_decline_dir (), 'tmp', "$file.sig");
    my $res1 = $ua->mirror ("$url/$castle_id/$subdir/$file.json", $json_file);
    my $res2 = $ua->mirror ("$url/$castle_id/$subdir/$file.sig",  $sig_file);
 
@@ -1260,24 +1333,28 @@ sub sync_keys {
          next if exists $old_struct->{$k};
 
          warn "New key $k\n";
-         $response = $ua->mirror ( $url . "/$k.asc", catfile (get_decline_dir (), 'data', "$k.asc"));
+         my $tmp_file = catfile (get_decline_dir (), 'tmp', "$k.asc");
+         $response = $ua->mirror ($url . "/$k.asc", $tmp_file);
          if ($response->code =~ /^(2|3)/) {
 
             my ($rc, $err) = gen_address ($new_struct->{$k}{address});
-            if ($rc) {
+            if (! $rc) {
 
-               Decline::gpg_add_key (catfile (get_decline_dir (), 'data', "$k.asc"), $k);
-               Decline::init_keys_json ();
-               Decline::set_key_attribute ($k, 'address', $new_struct->{$k}{address});
-               Decline::set_point_attribute ($new_struct->{$k}{address}, 'self', 0);
-               $count++;
-            }
-            else {
-
-               warn "Bad address in $k.keys.json : $err\n";
+               warn "Bad address in $tmp_file : $err. add_key() skipped\n";
                next;
             }
+
+            if (! add_key ($tmp_file, $k)) {
+
+               warn "add_key() failed (bad file $tmp_file)\n";
+               next;
+            }
+            init_keys_json ();
+            set_key_attribute ($k, 'address', $new_struct->{$k}{address});
+            set_point_attribute ($new_struct->{$k}{address}, 'self', 0);
+            $count++;
          }
+         unlink ($tmp_file);
       }
    }
    return $count++;
@@ -1345,7 +1422,8 @@ sub generate_svg {
 
    my $multi = (1000 / ($mapid * 100));
 
-   my (%seen, $result) = ((), []);
+   my %seen   = ();
+   my $result = [];
 
    foreach my $castle_ref (list_castles ()) {
 
