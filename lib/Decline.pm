@@ -9,13 +9,14 @@ use Mojo::JSON qw(decode_json encode_json);
 use LWP::UserAgent;
 use Mojo::UserAgent;
 use Time::HiRes qw(gettimeofday);
-use Digest::SHA  qw(sha1_hex);
 use LWP::Simple qw(mirror);
 use LWP::Protocol::https;
 use Archive::Zip;
 use File::stat;
 use File::Copy qw(copy);
 use File::Basename qw(basename);
+use Crypt::Digest::SHA1 qw(sha1_hex sha1_file_hex);  # package CryptX
+use Crypt::PK::RSA;                                  # package CryptX
 
 our $decline_dir;
 our $version = 1;
@@ -59,22 +60,30 @@ sub create_directory_tree {
    }
 }
 
+sub write_file_slurp {
+   my ($data, $path, $binmode) = @_;
+
+   if (open (FILE, '>', $path)) {
+
+      binmode (FILE) if $binmode;
+      print FILE $data;
+      close (FILE);
+      return 0;
+   }
+   return 1;
+}
+
 sub read_file_slurp {
-   my $path = shift;
+   my ($path, $binmode) = @_;
    my $result = '';
 
    if (open (FILE, '<', $path)) {
 
+      binmode (FILE) if $binmode;
       $result .= $_ while (<FILE>);
       close (FILE);
    }
    return $result;
-}
-
-sub sha1_hex_file {
-   my $path = shift;
-
-   return sha1_hex (read_file_slurp ($path));
 }
 
 sub op_stringification {
@@ -84,51 +93,15 @@ sub op_stringification {
    return "$op";
 }
 
-sub set_gpg_path {
-   my $path = shift;
-
-   if (open (FILE, '>', catfile (get_decline_dir (), 'key', 'gpg_path.txt'))) {
-
-      print FILE $path;
-      close (FILE);
-   }
-}
-
-sub get_gpg_path {
-
-   my $path = read_file_slurp (catfile (get_decline_dir (), 'key', 'gpg_path.txt'));
-   return $path if $path;
-
-   foreach my $file ('C:\Program Files\GNU\GnuPG\gpg.exe', '/usr/bin/gpg' ) {
-
-      next if ! -e $file;
-      set_gpg_path ($file);
-      return $file;
-   }
-   return undef;
-}
-
 sub gpg_add_key {
    my ($path, $key_id) = @_;
 
-   my @list = (
-      get_gpg_path (),
-      '--homedir',
-      catfile (get_decline_dir (), 'key'),
-      '--batch',
-      '--yes',
-      '--import',
-      $path
-   );
-
-   # warn join (' ', @list);
-   my $rc = system (@list);
    my $destination = catfile (get_decline_dir (), 'data', "$key_id.asc");
-   if (! $rc && ! -e $destination) {
+   if (! -e $destination) {
 
       copy ($path, $destination);
    }
-   return $rc;
+   return 0;
 }
 
 sub kingdom_json_file {
@@ -152,12 +125,12 @@ sub rollback_save_state {
       {
          source => kingdom_json_file (),
          bak    => kingdom_json_file ('.bak'),
-         sha1   => sha1_hex_file (kingdom_json_file ())
+         sha1   => sha1_file_hex (kingdom_json_file ())
       },
       {
          source => castle_state_file ($castle_id),
          bak    => castle_state_file ($castle_id, '.bak'),
-         sha1   => sha1_hex_file (castle_state_file ($castle_id))
+         sha1   => sha1_file_hex (castle_state_file ($castle_id))
       },
    ];
 
@@ -171,8 +144,8 @@ sub rollback_restore {
 
    foreach my $file (@{$saved_state}) {
 
-      my $sha1_bak = sha1_hex_file ($file->{bak});
-      if ($file->{sha1} eq sha1_hex_file ($file->{bak})) {
+      my $sha1_bak = sha1_file_hex ($file->{bak});
+      if ($file->{sha1} eq sha1_file_hex ($file->{bak})) {
 
          if (! copy ($file->{bak}, $file->{source})) {
 
@@ -191,38 +164,20 @@ sub rollback_restore {
 sub gpg_create_signature {
    my ($source, $signature) = @_;
 
-   my $rc = system (
-      get_gpg_path (),
-      '--homedir',
-      catfile (get_decline_dir (), 'key'),
-      '--batch',
-      '--yes',
-      '--output',
-      $signature,
-      '--detach-sig',
-      $source
-   );
-   warn "gpg_create_signature $source -> $signature failed: $?\n" if $?;
-   return ($rc ? ($rc == -1 ? "failed to execute GPG $!" : "GPG runtime error $?") : 0);
+   my $pk = Crypt::PK::RSA->new (catfile (get_decline_dir (), 'key', 'key.private'));
+   my $sig = $pk->sign_message (read_file_slurp ($source));
+
+   write_file_slurp ($sig, $signature, 1);
+
+   return 0;
 }
 
 sub gpg_verify_signature {
-   my ($source, $signature) = @_;
+   my ($key, $source, $signature) = @_;
 
-   my @list = (
-      get_gpg_path (),
-      '--homedir',
-      catfile (get_decline_dir (), 'key'),
-      '--batch',
-      '--yes',
-      '--verify',
-      $signature,
-      $source
-   );
-
-   # warn join (' ', @list, "\n");
-   my $rc = system (@list);
-   return $rc;
+   my $pk = Crypt::PK::RSA->new (catfile (get_decline_dir (), 'data', "$key.asc"));
+   my $verify = $pk->verify_message (read_file_slurp ($signature, 1), read_file_slurp ($source));
+   return ($verify ? 0 : 1);
 }
 
 sub lock_data {
@@ -240,13 +195,7 @@ sub lock_data {
 
    return undef if -f $lockfile;
 
-   if (open (FILE, '>', $lockfile)) {
-
-      print FILE $$;
-      close (FILE);
-      return 1;
-   }
-   return undef;
+   return (write_file_slurp ($$, $lockfile) ? undef : 1);
 }
 
 sub unlock_data {
@@ -255,33 +204,6 @@ sub unlock_data {
    my $lockfile = catfile (get_decline_dir (), 'data', ($file || "file" ) . '.lck');
 
    unlink ($lockfile) if -e $lockfile;
-}
-
-sub get_gpg_path_escape {
-   my $file = get_gpg_path ();
-   $file = '"' . $file . '"' if $file =~ /\s/;
-   return $file;
-}
-
-sub gen_gpg_batch_file {
-
-   my $batch_file = catfile (get_decline_dir (), 'key', 'gpg.batch.txt');
-
-   my $rand = int (rand (100000000));
-
-   if (open (FILE, '>', $batch_file)) {
-
-      print FILE "%echo Generating a basic OpenPGP key\n";
-      print FILE "Key-Type: RSA\n";
-      print FILE "Name-Real: Test$rand\n";
-      print FILE "Name-Comment: Test$rand\n";
-      print FILE "Name-Email: joe$rand\@foo.bar\n";
-      print FILE "Expire-Date: 0\n";
-      print FILE "%commit\n";
-      print FILE "%echo done\n";
-      close (FILE);
-   }
-   return $batch_file;
 }
 
 sub keys_json_file {
@@ -332,11 +254,7 @@ sub save_keys_json {
    my $result = shift;
 
    my $json = get_json ($result);
-   if (open (FILE, '>', keys_json_file ())) {
-
-      print FILE $json;
-      close (FILE);
-   }
+   write_file_slurp (get_json ($result), keys_json_file ());
 }
 
 sub set_key_attribute {
@@ -363,13 +281,9 @@ sub set_point_attribute {
 
    $network->{$point}{$param} = $value;
 
-   my $json = get_json ($network);
+   my $j = get_json ($network);
 
-   if (open (FILE, '>', catfile (get_decline_dir (), 'data', 'points.json'))) {
-
-      print FILE $json;
-      close (FILE);
-   }
+   write_file_slurp ($j, catfile (get_decline_dir (), 'data', 'points.json'));
 }
 
 sub get_my_address {
@@ -387,20 +301,22 @@ sub init_keys_json {
    my $result = {};
    $result = load_json (keys_json_file ()) if -f keys_json_file ();
 
-   if (open (PIPE, '-|', get_gpg_path_escape () ." -a --homedir key --batch --no-comment --no-version --with-colons --list-keys")) {
+   my $key_sha1 = sha1_file_hex (catfile (get_decline_dir (), 'key', 'key.public'));
 
-      while (my $str = <PIPE>) {
+   foreach my $file (grep { -f $_ } glob (catfile (get_decline_dir (), 'data') . "/*")) {
 
-         my @list = split (/:/, $str);
-         if ($list[0] eq 'pub') {
+      if (basename ($file) =~ /(\w+)\.asc$/) {
 
-            $result->{ $list[4] }{type} = $list[1];
-            $result->{ $list[4] }{address} = get_my_address () if $list[1] eq 'u';
+         my $key = $1;
+         next if exists $result->{$key};
+         if (sha1_file_hex ($file) eq $key_sha1) {
+
+            $result->{$key} = { type => 'u', address => get_my_address () };
+            next;
          }
+         $result->{$key}{type} = '-';
       }
-      close (PIPE);
    }
-
    save_keys_json ($result);
 }
 
@@ -419,6 +335,17 @@ sub get_key_id {
    }
 }
 
+sub key_for_point {
+   my $point = shift;
+
+   my $keys = get_keys ();
+   foreach my $k (keys %{$keys}) {
+
+      return $k if exists $keys->{$k}{address} && $keys->{$k}{address} eq $point;
+   }
+   return '';
+}
+
 sub get_my_port {
 
    my $addr = get_my_address ();
@@ -429,50 +356,20 @@ sub get_my_port {
 }
 
 sub create_new_key {
-   my $gpg_path = shift;
 
-   my $homedir = catfile (get_decline_dir (), 'key');
+   my $dest = catfile (get_decline_dir (), 'key', 'key');
 
-   my @list = (
-      $gpg_path,
-      '--homedir',
-      $homedir,
-      '--gen-key',
-      '--batch',
-      gen_gpg_batch_file ()
-   );
-
-   my $rc = system (@list);
-
-   # warn join (' ', @list ) ." $rc $!\n";
+   my $pk = Crypt::PK::RSA->new();
+      $pk->generate_key(256, 65537);
+   write_file_slurp ($pk->export_key_der ('public' ), "$dest.public",  1);
+   write_file_slurp ($pk->export_key_der ('private'), "$dest.private", 1);
 
    unlink (keys_json_file ());
+   copy (
+      $dest . '.public',
+      catfile (get_decline_dir (), 'data', sha1_file_hex ( $dest . '.public' ) . '.asc')
+   );
    init_keys_json ();
-
-   if (my $keyid = get_key_id ()) {
-
-      @list = (
-         $gpg_path,
-         '--homedir',
-         $homedir,
-         '--export',
-         '--armor',
-         '--output',
-         catfile (get_decline_dir (), 'data', "$keyid.asc")
-      );
-      $rc = system (@list);
-      # warn join (' ', @list ) ." $rc $!\n";
-      # TODO config.json
-      if (open (FILE, '>', catfile (get_decline_dir (), 'key', 'gpg_path.txt'))) {
-
-         print FILE $gpg_path;
-         close (FILE);
-      }
-   }
-   else {
-
-      warn "Key generation failed\n";
-   }
 }
 
 sub get_utc_hour {
@@ -566,29 +463,22 @@ sub write_op {
    return (1, "exist operation file $path_to_file") if -e $path_to_file;
 
    my $json = get_json ($hashref);
-   if (open (FILE, '>', $path_to_file)) {
+   if (write_file_slurp (get_json ($hashref), $path_to_file)) {
 
-      print FILE $json;
-      close (FILE);
-
-      return (0, $path_to_file, catfile ($full_dir, $file . '.sig'));
+      return (1, "Unable open file $path_to_file");
    }
-   return (1, "Unable open file $path_to_file");
+   return (0, $path_to_file, catfile ($full_dir, $file . '.sig'));
 }
 
 sub write_castle_state {
    my ($json, $castle_id) = @_;
 
-   if (! copy (castle_state_file ($castle_id), castle_state_file ($castle_id, '.bak'))) {
+   if (-e castle_state_file ($castle_id) && ! copy (castle_state_file ($castle_id), castle_state_file ($castle_id, '.bak'))) {
 
-      warn "Unable state.json backup file ($castle_id)\n";
+      warn "Unable state.json backup file ($castle_id) $!\n";
    }
 
-   if (open (FILE, '>', castle_state_file ($castle_id))) {
-
-      print FILE $json;
-      close (FILE);
-   }
+   write_file_slurp ($json, castle_state_file ($castle_id));
    undef ($geo_index);
    $geo_index = {};
 }
@@ -601,18 +491,13 @@ sub write_kingdom_state {
       my (undef, $sha1) = get_json_and_sha1 ($castle);
       $result->{ $castle->{id} } = $sha1;
    }
-   my $json = get_json ($result);
 
-   if (! copy (kingdom_json_file (), kingdom_json_file ('.bak'))) {
+   if (-e kingdom_json_file () && ! copy (kingdom_json_file (), kingdom_json_file ('.bak'))) {
 
-      warn "Unable kingdom.json backup file\n";
+      warn "Unable kingdom.json backup file $!\n";
    }
 
-   if (open (FILE, '>', kingdom_json_file ())) {
-
-      print FILE $json;
-      close (FILE);
-   }
+   write_file_slurp (get_json ($result), kingdom_json_file ());
 }
 
 sub atomic_write_data {
@@ -1190,7 +1075,7 @@ sub unauthorised_router {
 }
 
 sub sync_castle {
-   my ($type, $castle_id, $point_template, $needed_sha1) = @_;
+   my ($type, $castle_id, $point_template, $needed_sha1, $key) = @_;
 
    my $ua = LWP::UserAgent->new;
    $ua->timeout (20);
@@ -1216,7 +1101,7 @@ sub sync_castle {
 
    if ($res1->code !~ /^(2|3)/ || $res2->code !~ /^(2|3)/) {
 
-      my $real_sha1 = sha1_hex_file (castle_state_file ($castle_id));
+      my $real_sha1 = sha1_file_hex (castle_state_file ($castle_id));
       if ($real_sha1 ne $needed_sha1) {
 
          warn "Not found next file $file (but kingdom incomplete) $real_sha1 $needed_sha1\n";
@@ -1224,7 +1109,7 @@ sub sync_castle {
       return 0;
    }
 
-   if (my $rc = Decline::gpg_verify_signature ($json_file, $sig_file)) {
+   if (my $rc = gpg_verify_signature ($key, $json_file, $sig_file)) {
 
       unlink ($sig_file);
       unlink ($json_file);
@@ -1247,7 +1132,7 @@ sub sync_castle {
    unlink ($sig_file);
    unlink ($json_file);
 
-   my $real_sha1 = sha1_hex_file (castle_state_file ($castle_id));
+   my $real_sha1 = sha1_file_hex (castle_state_file ($castle_id));
 
    if ($real_sha1 eq $oplog_sha1) {
 
@@ -1278,9 +1163,11 @@ sub sync_castles {
    foreach my $p (keys %{$points}) {
 
       my ($url, $errstr) = gen_address ($p);
+      my $key = key_for_point ($p);
       next if $p eq get_my_address ();
       next if ($points->{$p}{livedt} || 0) < get_utc_time () - 20;
       next if ! $url;
+      next if ! $key;
 
       my $response = $ua->mirror ("$url/kingdom.json", catfile (get_decline_dir (), 'data', 'remote', "$p.kingdom.json"));
 
@@ -1290,8 +1177,8 @@ sub sync_castles {
          next;
       }
 
-      next if ( Decline::sha1_hex_file (kingdom_json_file ()) eq
-                Decline::sha1_hex_file (catfile (get_decline_dir (), 'data', 'remote', "$p.kingdom.json")));
+      next if ( Decline::sha1_file_hex (kingdom_json_file ()) eq
+                Decline::sha1_file_hex (catfile (get_decline_dir (), 'data', 'remote', "$p.kingdom.json")));
 
       my $old_struct = Decline::load_json (kingdom_json_file ());
       my $new_struct = Decline::load_json (catfile (get_decline_dir (), 'data', 'remote', "$p.kingdom.json"));
@@ -1302,9 +1189,9 @@ sub sync_castles {
       foreach my $k (keys %{$new_struct}) {
 
          # sha1 in kingdom.json == state.json: kingdom.json incomplete another side
-         next if $new_struct->{$k} eq sha1_hex_file (castle_state_file ($k));
+         next if $new_struct->{$k} eq sha1_file_hex (castle_state_file ($k));
 
-         if (my $dt = Decline::sync_castle ((exists $old_struct->{$k} ? "update" : "create"), $k, $p, $new_struct->{$k})) {
+         if (my $dt = Decline::sync_castle ((exists $old_struct->{$k} ? "update" : "create"), $k, $p, $new_struct->{$k}, $key)) {
 
             return $dt;
          }
@@ -1338,8 +1225,8 @@ sub sync_keys {
          next;
       }
 
-      next if (Decline::sha1_hex_file (catfile (get_decline_dir (), 'data', 'remote', "$p.keys.json")) eq
-               Decline::sha1_hex_file (catfile (get_decline_dir (), 'data', 'keys.json')));
+      next if (Decline::sha1_file_hex (catfile (get_decline_dir (), 'data', 'remote', "$p.keys.json")) eq
+               Decline::sha1_file_hex (catfile (get_decline_dir (), 'data', 'keys.json')));
 
       warn "$p exchange keys.json\n";
 

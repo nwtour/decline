@@ -36,17 +36,8 @@
 
       <tr><td colspan="6">
          Создание ключа<br>
-%        if ($params->{gpg_path}) {
-
-            <a href="/global/sync/?gpg_path=<%= $params->{gpg_path} %>&yes=1">Создать новый ключ (займет некоторое время)</a><br>
-%        }
-%        else {
-
-            <form method="GET" action="/global/sync/">
-               <input type="text" name="gpg_path"><br>
-               <input type="submit" value="Отправить">
-            </form>
-%        }
+         <a href="/global/sync/?yes=1">Создать новый ключ (займет некоторое время)</a><br>
+      </td></tr>
 %  }
 %  else {
 

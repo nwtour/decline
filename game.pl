@@ -157,20 +157,10 @@ any '/global/:select' => sub {
 
    if (! $key) {
 
-      if ($c->param ('gpg_path') && -e $c->param ('gpg_path')) {
-
-         $params->{gpg_path} = $c->param ('gpg_path');
-      }
-      else {
-
-         $params->{gpg_path} = Decline::get_gpg_path ();
-      }
-
       if ($c->param ('yes')) {
 
-         Decline::create_new_key ($params->{gpg_path});
+         Decline::create_new_key ();
          $key = Decline::get_key_id ();
-         Decline::set_gpg_path ($params->{gpg_path}) if $key;
          return $c->redirect_to ("/global/sync");
       }
       else {
