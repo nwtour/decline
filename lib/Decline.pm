@@ -90,13 +90,6 @@ sub read_file_slurp {
    return $result;
 }
 
-sub op_stringification {
-   my $op = shift;
-
-   $op = sprintf ("%07d", $op);
-   return "$op";
-}
-
 sub add_key {
    my ($path, $key_id) = @_;
 
@@ -408,6 +401,24 @@ sub get_json_and_sha1 {
    return ($json, sha1_hex ($json));
 }
 
+sub json_with_fixed_datatypes {
+   my $hashref = shift;
+
+   my $types = {
+      gold          => "%.2f",
+      gold_increase => "%.2f",
+      opid          => "%d",
+   };
+
+   foreach my $p (keys %{$types}) {
+
+      next if ! exists $hashref->{$p};
+      $hashref->{$p} = sprintf ($types->{$p}, $hashref->{$p});
+   }
+
+   return get_json_and_sha1 ($hashref);
+}
+
 sub part_json {
    my $arrayref = shift;
 
@@ -443,14 +454,16 @@ sub microseconds {
    return $microseconds;
 }
 
+# 0 -> ('0000' '000'), 5523 -> ('0005', '523')
 sub parse_op_id {
    my $opid = shift;
 
-   if ($opid && $opid =~ /^(\d{4})(\d{3})$/) {
+   return (0, undef) if ! defined ($opid);
 
-      return ($1, $2);
-   }
-   return (0, undef);
+   return (
+      sprintf ("%04s", int ($opid / 1000)),
+      sprintf ("%03s", substr ($opid, -3))
+   );
 }
 
 sub write_op {
@@ -458,10 +471,7 @@ sub write_op {
 
    my ($sub_dir, $file) = parse_op_id ($hashref->{opid});
 
-   if (! defined ($file)) {
-
-      return (1, "Bad operation ID ($hashref->{op} -> $hashref->{opid})");
-   }
+   return (1, "Bad operation ID ($hashref->{op} -> $hashref->{opid})") if ! defined ($file);
 
    my $full_dir = catfile (get_decline_dir (), 'data', $castle_id, $sub_dir);
    create_directory_tree ($castle_id, $sub_dir);
@@ -616,48 +626,6 @@ sub restrict_new_castle {
    return ($max_create_dt + (24*60*60) - get_utc_time ());
 }
 
-sub unauthorised_create_castle {
-   my $struct = shift;
-
-   my $key       = $struct->{key};
-   my $stepdt    = $struct->{stepdt};
-   my $castle_id = $struct->{id};
-   my $x         = $struct->{x};
-   my $y         = $struct->{y};
-   my $mapid     = $struct->{mapid};
-   my $dt        = $struct->{dt};
-
-   if (restrict_new_castle ($key)) {
-
-      return (1, "No time for new castle");
-   }
-
-   my $castle_dir = catfile (get_decline_dir (), 'data', $castle_id);
-   create_directory_tree ($castle_id);
-   my $data = {
-      key        => $key,
-      dt         => $dt,
-      id         => $castle_id,
-      x          => $x,
-      y          => $y,
-      gold       => 50,
-      population => 100,
-      power      => 0,
-      mapid      => $mapid,
-      army       => {},
-      stepdt     => $stepdt,
-      laststep   => $dt,
-      opid       => '0000000',
-   };
-   my $op_data = dclone ($data);
-   my ($json, $sha1) = get_json_and_sha1 ($data);
-   my (undef, $old_sha1) = get_json_and_sha1 ({});
-   $op_data->{op} = "unauthorised_create_castle";
-   $op_data->{new} = $sha1;
-   $op_data->{old} = $old_sha1;
-   return atomic_write_data ($castle_id, $json, $op_data);
-}
-
 sub load_geo_index {
    my $mapid = shift;
 
@@ -708,6 +676,24 @@ sub is_free_coord {
    return 0;
 }
 
+sub is_free_district {
+   my ($mapid, $x, $y) = @_;
+
+   return 0 if ! is_free_coord ($mapid,       $x,  $y     );
+   return 0 if ! is_free_coord ($mapid, ($x + 1),  $y     );
+   return 0 if ! is_free_coord ($mapid, ($x - 1),  $y     );
+
+   return 0 if ! is_free_coord ($mapid,       $x, ($y - 1));
+   return 0 if ! is_free_coord ($mapid, ($x + 1), ($y - 1));
+   return 0 if ! is_free_coord ($mapid, ($x - 1), ($y - 1));
+
+   return 0 if ! is_free_coord ($mapid,       $x, ($y + 1));
+   return 0 if ! is_free_coord ($mapid, ($x + 1), ($y + 1));
+   return 0 if ! is_free_coord ($mapid, ($x - 1), ($y + 1));
+
+   return 1;
+}
+
 sub generate_free_coord {
 
    foreach my $plus (0 .. 10) {
@@ -716,17 +702,7 @@ sub generate_free_coord {
 
          my ($x, $y, $mapid) = create_new_coord ($plus);
 
-         next if ! is_free_coord ($mapid,       $x,  $y     );
-         next if ! is_free_coord ($mapid, ($x + 1),  $y     );
-         next if ! is_free_coord ($mapid, ($x - 1),  $y     );
-
-         next if ! is_free_coord ($mapid,       $x, ($y - 1));
-         next if ! is_free_coord ($mapid, ($x + 1), ($y - 1));
-         next if ! is_free_coord ($mapid, ($x - 1), ($y - 1));
-
-         next if ! is_free_coord ($mapid,       $x, ($y + 1));
-         next if ! is_free_coord ($mapid, ($x + 1), ($y + 1));
-         next if ! is_free_coord ($mapid, ($x - 1), ($y + 1));
+         next if ! is_free_district ($mapid, $x, $y);
 
          return ($x, $y, $mapid);
       }
@@ -735,6 +711,53 @@ sub generate_free_coord {
    warn "generate_free_coord failed! 100 map busy!!!!!\n";
 
    return (0, 0, 0);
+}
+
+sub unauthorised_create_castle {
+   my $struct = shift;
+
+   my $key       = $struct->{key};
+   my $stepdt    = $struct->{stepdt};
+   my $castle_id = $struct->{id};      # TODO check exists
+   my $x         = $struct->{x};
+   my $y         = $struct->{y};
+   my $mapid     = $struct->{mapid};
+   my $dt        = $struct->{dt};      # TODO check real <CURDATE >REAL?
+
+   if (restrict_new_castle ($key)) {
+
+      return (1, "No time for new castle");
+   }
+
+   if (! is_free_district ($mapid, $x, $y)) {
+
+      return (1, "New castle $castle_id in restricted area $x $y");
+   }
+
+   my $castle_dir = catfile (get_decline_dir (), 'data', $castle_id);
+   create_directory_tree ($castle_id);
+   my $data = {
+      key           => $key,
+      dt            => $dt,
+      id            => $castle_id,
+      x             => $x,
+      y             => $y,
+      gold          => 50,
+      population    => 100,
+      power         => 0,
+      mapid         => $mapid,
+      army          => {},
+      stepdt        => $stepdt,
+      laststep      => $dt,
+      opid          => 0,
+   };
+   my $op_data = dclone ($data);
+   my ($json, $sha1)     = json_with_fixed_datatypes ($data);
+   my (undef, $old_sha1) = get_json_and_sha1 ({});
+   $op_data->{op} = "unauthorised_create_castle";
+   $op_data->{new} = $sha1;
+   $op_data->{old} = $old_sha1;
+   return atomic_write_data ($castle_id, $json, $op_data);
 }
 
 sub create_new_castle {
@@ -769,7 +792,7 @@ sub unauthorised_buy_army {
    my $struct = shift;
 
    my $castle_id = $struct->{id};
-   my $dt        = $struct->{dt};
+   my $dt        = $struct->{dt}; # TODO check
    my $army_id   = $struct->{army_id};
    my $army_name = $struct->{name};
 
@@ -798,9 +821,11 @@ sub unauthorised_buy_army {
       bdt        => $dt,
       health     => 100
    };
-   $clone_data->{opid} = op_stringification (++$clone_data->{opid});
-   my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
-   my ($json, $sha1) = get_json_and_sha1 ($clone_data);
+
+   ++$clone_data->{opid};
+
+   my (undef, $old_sha1) = json_with_fixed_datatypes ($castle_ref);
+   my ($json, $sha1)     = json_with_fixed_datatypes ($clone_data);
 
    return atomic_write_data ($castle_id, $json, {
       op      => 'unauthorised_buy_army',
@@ -900,7 +925,7 @@ sub unauthorised_move_army {
 
    my ($rc, $err, undef) = has_move_army ($castle_id, $army_id, $direction);
    return (1, $err) unless $rc;
-   return (1, "Unimplemented attack") if $rc == 2;
+   return (1, "Unimplemented attack") if $rc == 2; # TODO
 
    my $castle_ref = load_castle ($castle_id);
 
@@ -911,9 +936,10 @@ sub unauthorised_move_army {
    ($clone_data->{army}{$army_id}{x}, $clone_data->{army}{$army_id}{y}) =
       coord_for_direction ($clone_data->{army}{$army_id}{x}, $clone_data->{army}{$army_id}{y}, $direction);
 
-   $clone_data->{opid} = op_stringification (++$clone_data->{opid});
-   my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
-   my ($json, $sha1) = get_json_and_sha1 ($clone_data);
+   ++$clone_data->{opid};
+
+   my (undef, $old_sha1) = json_with_fixed_datatypes ($castle_ref);
+   my ($json, $sha1)     = json_with_fixed_datatypes ($clone_data);
    return atomic_write_data ($castle_id, $json, {
       op        => 'unauthorised_move_army',
       direction => $direction,
@@ -948,20 +974,23 @@ sub unauthorised_increase_population {
    my $castle_ref = load_castle ($struct->{id});
    my $clone_data = dclone ($castle_ref);
    $clone_data->{laststep}            = $struct->{dt};
-   $clone_data->{gold_increase}       = sprintf ("%.2f", $struct->{gold_increase});
+   $clone_data->{gold_increase}       = $struct->{gold_increase};
    $clone_data->{population_increase} = $struct->{population_increase};
+   $clone_data->{army_tarif}          = $struct->{army_tarif};
 
    $clone_data->{gold}       += $struct->{gold_increase};
+   $clone_data->{gold}       -= $struct->{army_tarif};
    $clone_data->{population} += $struct->{population_increase};
 
-   $clone_data->{opid} = op_stringification (++$clone_data->{opid});
+   ++$clone_data->{opid};
 
-   my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
-   my ($json, $sha1) = get_json_and_sha1 ($clone_data);
+   my (undef, $old_sha1) = json_with_fixed_datatypes ($castle_ref);
+   my ($json, $sha1)     = json_with_fixed_datatypes ($clone_data);
    my $op = {
       op                  => 'unauthorised_increase_population',
       gold_increase       => $struct->{gold_increase},
       population_increase => $struct->{population_increase},
+      army_tarif          => $struct->{army_tarif},
       dt                  => $struct->{dt},
       new                 => $sha1,
       old                 => $old_sha1,
@@ -976,11 +1005,22 @@ sub increase_population {
    my ($castle_ref, $dt) = @_;
 
    my $population = $castle_ref->{population};
-   my $gold = ($population / 3) / 8;
-   $gold = sprintf ("%.2f", $gold);
+   my $gold       = ($population / 3) / 8;
 
    $population = int ($population / 50);
    $population = 1 unless $population;
+
+   my $army_tarif = 0;
+   foreach my $arm_id (keys %{$castle_ref->{army}}) {
+
+      my $name  = $castle_ref->{army}{$arm_id}{name};
+
+      if (! exists $army->{$name}{1}{tarif}) {
+
+         return "Invalid army $name in castle " . $castle_ref->{id}; 
+      }
+      $army_tarif += $army->{$name}{1}{tarif};
+   }
 
    my $rollback = rollback_save_state ($castle_ref->{id});
    my ($rc, @data) = unauthorised_increase_population ({
@@ -988,6 +1028,7 @@ sub increase_population {
       dt                  => $dt,
       gold_increase       => $gold,
       population_increase => $population,
+      army_tarif          => $army_tarif
    });
    warn $data[0] . "\n" if $rc;
    if (! $rc && gpg_create_signature (@data)) {
@@ -1022,9 +1063,11 @@ sub increase_movement {
    }
 
    $clone_data->{laststep} = $dt;
-   $clone_data->{opid} = op_stringification (++$clone_data->{opid});
-   my (undef, $old_sha1) = get_json_and_sha1 ($castle_ref);
-   my ($json, $sha1) = get_json_and_sha1 ($clone_data);
+   ++$clone_data->{opid};
+
+   my (undef, $old_sha1) = json_with_fixed_datatypes ($castle_ref);
+   my ($json, $sha1)     = json_with_fixed_datatypes ($clone_data);
+
    my $rollback = rollback_save_state ($castle_ref->{id});
    my ($rc, @data) = atomic_write_data ($castle_ref->{id}, $json, {
       op   => 'unauthorised_increase_movement',
@@ -1168,7 +1211,7 @@ sub sync_castle {
    my $ua = LWP::UserAgent->new;
    $ua->timeout (20);
 
-   my ($subdir, $file) = ('0000', '000');
+   my ($subdir, $file) = parse_op_id (0);
 
    if ($type eq "update") {
 
