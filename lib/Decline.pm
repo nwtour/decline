@@ -35,6 +35,22 @@ our $army = {
       ru => 'Охранник',
       1  => { attack => 1, defense => 2, movement => 3, cost => 10, tarif => 0.8 }
    },
+   "archer" => {
+      ru => 'Лучник',
+      1  => { attack => 2, defense => 1, movement => 3, cost => 10, tarif => 0.8 }
+   },
+   "cavalry" => {
+      ru => 'Разведчик',
+      1  => { attack => 2, defense => 1, movement => 6, cost => 30, tarif => 2 }
+   },
+   "balista" => {
+      ru => 'Балиста',
+      1  => { attack => 4, defense => 1, movement => 3, cost => 40, tarif => 1.5 }
+   },
+   "heavy" => {
+      ru => 'Тяжелый рыцать',
+      1  => { attack => 3, defense => 5, movement => 3, cost => 60, tarif => 3.5 }
+   },
 };
 
 sub get_decline_dir {
