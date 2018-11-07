@@ -2,8 +2,8 @@
 % content header => begin
    <center>
    <table border="0" width="50%" bgcolor="#ffff99">
-      <tr bgcolor="#dddd00"><td colspan="2">Создать замок</td></tr>
-      <tr><td colspan="2">
+      <tr bgcolor="#dddd00"><td colspan="3">Создать новый замок</td></tr>
+      <tr><td colspan="3">
 %        if ($params->{hour}) {
             <br>
             Новый замок.
@@ -30,7 +30,7 @@
       </td></tr>
 %     if (scalar (@{ $params->{list} })) {
 
-         <tr bgcolor="#dddd00"><td colspan="2">Выберите замок</td></tr>
+         <tr bgcolor="#dddd00"><td colspan="3">Выберите замок</td></tr>
 %     }
 %     foreach my $castle ( @{ $params->{list} } ) {
          <tr><td>
@@ -39,6 +39,9 @@
             </a>
          </td><td>
             <a href="/public/castle/<%= $castle->{id} %>">Замок: без названия x<%= $castle->{x} %> y<%= $castle->{y} %></a>
+         </td>
+         <td>
+            Карта: <%= $castle->{mapid} %>00x<%= $castle->{mapid} %>00
          </td></tr>
 %     }
    </table>

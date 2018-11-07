@@ -208,6 +208,7 @@ any '/global/:select' => sub {
    }
    elsif ($select eq 'kingdom') {
 
+      $params->{mapid}      = ($c->param ('map') || 1);
       $params->{max_map_id} = Decline::get_max_map_id ();
    }
 

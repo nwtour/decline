@@ -646,6 +646,26 @@ sub load_geo_index {
    my $mapid = shift;
 
    my $i = 0;
+
+   if (-f catfile (get_decline_dir (), 'map', 'map.json')) {
+
+      my $hashref = decode_json (read_file_slurp (catfile (get_decline_dir (), 'map', 'map.json')));
+
+      foreach my $k (keys %{$hashref}) {
+
+         my ($x, $y) = $k =~ m/(\d+)x(\d+)/;
+         foreach my $mid_x (1 .. $mapid) {
+
+            $mid_x--;
+            foreach my $mid_y (1 .. $mapid) {
+
+               $mid_y--;
+               $geo_index->{$mapid}{ ($x + ($mid_x * 100)) }{ ($y + ($mid_y * 100)) } = $hashref->{$k};
+            }
+         }
+      }
+   }
+
    foreach my $castlehr (list_castles ()) {
 
       next if $castlehr->{mapid} ne $mapid;
@@ -671,14 +691,14 @@ sub picture_by_coord {
       load_geo_index ($mapid);
    }
 
-   return "0" if $x < 0;
-   return "0" if $y < 0;
+   return 0 if $x < 0;
+   return 0 if $y < 0;
 
-   return "0" if $x > ($mapid * 100);
-   return "0" if $y > ($mapid * 100);
+   return 0 if $x > ($mapid * 100);
+   return 0 if $y > ($mapid * 100);
 
-   return "5" if ! exists $geo_index->{$mapid}{$x};
-   return "5" if ! exists $geo_index->{$mapid}{$x}{$y};
+   return 5 if ! exists $geo_index->{$mapid}{$x};
+   return 5 if ! exists $geo_index->{$mapid}{$x}{$y};
 
    return $geo_index->{$mapid}{$x}{$y};
 }
@@ -688,7 +708,7 @@ sub is_free_coord {
 
    my $r = picture_by_coord (@list);
 
-   return 1 if ! ref ($r) && $r eq "5";
+   return 1 if ! ref ($r) && $r > 0 && $r < 11;
    return 0;
 }
 

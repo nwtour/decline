@@ -1,20 +1,19 @@
 % extends 'template';
 % content header => begin
-<div class="base" id="base">
-%  foreach my $mapid (1 .. $params->{max_map_id}) {
-      <h1>Карта <%= $mapid %> (<%= $mapid %>00x<%= $mapid %>00)</h1><br>
+     <center>
+
+%    foreach my $mapid (1 .. $params->{max_map_id}) {
+%==     ($mapid == $params->{mapid} ? '' : "<a href=\"/global/kingdom/?map=$mapid\">")
+        Карта <%= $mapid %>00x<%= $mapid %>00
+%==     ($mapid == $params->{mapid} ? '' : "</a>")
+%    }
+
+     <h1>Карта <%= $params->{mapid} %> (<%= $params->{mapid} %>00x<%= $params->{mapid} %>00)</h1><br>
 
 % # TODO RTFM object should be scaling (not croping)
-% #      <object type="image/svg+xml" data="/svg/kingdom/<%= $mapid %>/file.svg" style="min-width: 50%; max-width: 100%; min-height: auto; max-height: auto;">
+% #      <object type="image/svg+xml" data="/svg/kingdom/<%= $params->{mapid} %>/file.svg" style="min-width: 50%; max-width: 100%; min-height: auto; max-height: auto;">
 % #      </object>
 
-      <image src="/svg/kingdom/<%= $mapid %>/file.svg" style="min-width: 50%; max-width: 100%; min-height: auto; max-height: auto;">
-%  }
-</div>
-% end
-
-% content base => begin
-   <div class="header">
-      <h1>Глобальная карта</h1>
-   </div>
+     <image src="/svg/kingdom/<%= $params->{mapid} %>/file.svg" style="min-width: 50%; max-width: 100%; min-height: auto; max-height: auto;">
+     </center>
 % end
