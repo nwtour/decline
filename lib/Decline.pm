@@ -1035,6 +1035,59 @@ sub unauthorised_increase_population {
    return atomic_write_data ($struct->{id}, $json, $op);
 }
 
+sub unauthorised_demobilization {
+   my $struct = shift;
+
+   my $castle_ref = load_castle ($struct->{id});
+   my $clone_data = dclone ($castle_ref);
+
+   my $name  = $castle_ref->{army}{$struct->{aid}}{name};
+
+   return (1, "Invalid army $name in castle " . $castle_ref->{id})
+      if ! $name || ! exists $army->{$name};
+
+   $clone_data->{gold}  += $army->{$name}{1}{cost};
+   $clone_data->{power} -= $army->{$name}{1}{cost};
+
+   delete ($clone_data->{army}{$struct->{aid}});
+
+   ++$clone_data->{opid};
+
+   my (undef, $old_sha1) = json_with_fixed_datatypes ($castle_ref);
+   my ($json, $sha1)     = json_with_fixed_datatypes ($clone_data);
+   my $op = {
+      op   => 'unauthorised_demobilization',
+      dt   => $struct->{dt},
+      aid  => $struct->{aid},
+      new  => $sha1,
+      old  => $old_sha1,
+      opid => $clone_data->{opid},
+   };
+   return atomic_write_data ($struct->{id}, $json, $op);
+}
+
+sub demobilization {
+   my ($castle, $aid) = @_;
+
+   my $castle_ref = load_castle ($castle);
+
+   return "demobilization: Unable load castle $castle" if ref ($castle_ref) ne 'HASH';
+
+   return "demobilization: ArmyId $aid not found in Castle" if ! exists $castle_ref->{army}{$aid};
+
+   my $rollback = rollback_save_state ($castle);
+   my ($rc, @data) = unauthorised_demobilization ({
+      id  => $castle,
+      dt  => get_utc_time (),
+      aid => $aid
+   });
+   warn $data[0] . "\n" if $rc;
+   if (! $rc && gpg_create_signature (@data)) {
+
+      return rollback_restore ($rollback, @data);
+   }
+}
+
 # население плюс 2 процента каждые три часа
 # деньги 4 процента от населения
 sub increase_population {

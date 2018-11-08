@@ -1,5 +1,8 @@
 % extends 'template';
 % content header => begin
-   <%= $key %><br>
-   Демобилизация<br>
+  <h1>Демобилизация</h1>
+% foreach my $aid (keys %{$castle->{army}}) {
+
+     <a href="/public/demolish/<%= $castle->{id} %>/?aid=<%= $aid %>">Демобилизовать <%= $castle->{army}{$aid}{name} %></a><br><br>
+% }
 % end

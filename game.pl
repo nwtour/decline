@@ -111,6 +111,14 @@ any '/public/:select/:castle' => sub {
       }
       return $c->redirect_to ("/public/map/$castle/?aid=" . $c->param ('aid'));
    }
+   elsif ($select eq 'demolish' && $c->param ('aid')) {
+
+      if (my $err = Decline::demobilization ($castle, $c->param ('aid'))) {
+
+         return $c->render (text => "Demobilization error $err");
+      }
+      return $c->redirect_to ("/public/demolish/$castle");
+   }
 
    $c->render (template => $select);
 };
