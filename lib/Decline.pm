@@ -958,7 +958,8 @@ sub unauthorised_buy_army {
       y          => $castle_ref->{y},
       level      => 1,
       expirience => 0,
-      movement   => 800, # $army->{$army_name}{1}{movement},
+#     movement   => 800,
+      movement   => $army->{$army_name}{1}{movement},
       bdt        => $dt,
       health     => 100
    };
@@ -1048,7 +1049,7 @@ sub has_move_army {
       return (0, "End of Kingdom") if $dest eq 0;
       return (1);
    }
-   my (undef, $cid, $caid) = @{ $dest };
+   my (undef, $cid, $caid) = @{$dest};
    if ($castle_id ne $cid) {
 
       return (2, $cid, $caid);
@@ -1063,41 +1064,149 @@ sub has_move_army2 {
    return $rc;
 }
 
-sub unauthorised_move_army {
+sub get_maximum_unit_in_enemy_castle {
+   my $enemy_castle_id = shift;
+
+   my $castle_ref = load_castle ($enemy_castle_id);
+   my ($max_def, $army_id) = (0, 0);
+   foreach my $aid (keys %{$castle_ref->{army}}) {
+
+      next if $castle_ref->{army}{$aid}{x} != $castle_ref->{x};
+      next if $castle_ref->{army}{$aid}{y} != $castle_ref->{y};
+
+      my $name    = $castle_ref->{army}{$aid}{name};
+      my $level   = $castle_ref->{army}{$aid}{level};
+      my $cur_def = ($army->{$name}{$level}{defense} / 100);
+      $cur_def   *= $castle_ref->{army}{$aid}{health};
+      if ($cur_def > $max_def) {
+
+         $max_def = $cur_def;
+         $army_id = $aid;
+      }
+   }
+   return $army_id;
+}
+
+# TODO altitude
+sub army_battle {
+   my ($first_castle, $first_army, $second_castle, $second_army) = @_;
+
+# TODO unimplemented
+   return (100, 0, 100, 0);
+}
+
+sub update_shadowcopy {
+   my ($key_id, $enemy_castle, @data) = @_;
+
+# TODO unimplemented
+# [ "army", $enemy_army_id, "health",     $second_hp ],
+# [ "army", $enemy_army_id, "expirience", $second_xp ],
+}
+
+
+sub unauthorised_move_or_attack {
    my $struct = shift;
 
    my $castle_id = $struct->{id};
    my $army_id   = $struct->{army_id};
    my $direction = $struct->{direction};
 
-   my ($rc, $err, undef) = has_move_army ($castle_id, $army_id, $direction);
-   return (1, $err) unless $rc;
-   return (1, "Unimplemented attack") if $rc == 2; # TODO
+   my ($rc, $error_or_enemy_castle_id, $enemy_army_id)
+      = has_move_army ($castle_id, $army_id, $direction);
+
+   return (1, $error_or_enemy_castle_id) if ! $rc;
+   if ($struct->{is_attack} && $rc != 2) {
+
+      return (1, "Attack on empty ground");
+   }
+   elsif (! $struct->{is_attack} && $rc == 2) {
+
+      return (1, "Move on non-empty ground");
+   }
 
    my $castle_ref = load_castle ($castle_id);
+
+   if (! $castle_ref->{army}{$army_id}{movement}) {
+
+      return (1, "Not enought movepoint");
+   }
 
    my $clone_data = dclone ($castle_ref);
    return (1, "Internal error: $@") if ! exists $clone_data->{mapid};
    $clone_data->{army}{$army_id}{movement}--;
 
-   ($clone_data->{army}{$army_id}{x}, $clone_data->{army}{$army_id}{y}) =
-      coord_for_direction (
-         $clone_data->{army}{$army_id}{x},
-         $clone_data->{army}{$army_id}{y},
-         $direction
-      );
+   my ($dest_x, $dest_y) = coord_for_direction (
+      $clone_data->{army}{$army_id}{x},
+      $clone_data->{army}{$army_id}{y},
+      $direction
+   );
+
+   if ($struct->{is_attack}) {
+
+      if (! $enemy_army_id) {
+
+         $enemy_army_id
+            = get_maximum_unit_in_enemy_castle ($error_or_enemy_castle_id);
+      }
+
+      if ($enemy_army_id) {
+
+         my ($first_hp, $first_xp, $second_hp, $second_xp)  = army_battle (
+            $castle_id,
+            $army_id,
+            $error_or_enemy_castle_id,
+            $enemy_army_id
+         );
+
+         my $iam_attack = is_my_castle (get_key_id (), $error_or_enemy_castle_id);
+         my $me_attack  = is_my_castle (get_key_id (), $castle_id               );
+         if (! $iam_attack && ! $me_attack) {
+
+            return (1, "unimplemented import attack"); # TODO
+         }
+         elsif ($iam_attack) {
+
+            update_shadowcopy (
+               get_key_id (),
+               $error_or_enemy_castle_id,
+               [ "army", $enemy_army_id, "health",     $second_hp ],
+               [ "army", $enemy_army_id, "expirience", $second_xp ],
+            );
+         }
+         elsif ($me_attack) {
+
+            return (1, "TODO unimplemented me attack"); # TODO
+         }
+         else {
+
+            return (1, "Bad condition in attack target");
+         }
+
+         warn "ATTACK ON $enemy_army_id\n";
+      }
+      else {
+
+         return (1, "Unimplemented obrok"); # TODO
+      }
+   }
+   else {
+
+      $clone_data->{army}{$army_id}{x} = $dest_x;
+      $clone_data->{army}{$army_id}{y} = $dest_y;
+   }
 
    ++$clone_data->{opid};
 
    my (undef, $old_sha1) = json_with_fixed_datatypes ($castle_ref);
    my ($json, $sha1)     = json_with_fixed_datatypes ($clone_data);
    return atomic_write_data ($castle_id, $json, {
-      op        => 'unauthorised_move_army',
+      op        => 'unauthorised_move_or_attack',
       direction => $direction,
       dt        => $struct->{dt},
       new       => $sha1,
       old       => $old_sha1,
       army_id   => $army_id,
+      is_attack => $struct->{is_attack},
       opid      => $clone_data->{opid}
    });
 }
@@ -1107,14 +1216,22 @@ sub move_army {
 
    my $rollback = rollback_save_state ($castle_id);
 
-   my ($rc, @data) = unauthorised_move_army ({
+   my ($rc, $error_or_enemy_castle_id, $enemy_army_id)
+      = has_move_army ($castle_id, $aid, $direction);
+   return (1, $error_or_enemy_castle_id) if ! $rc;
+
+   my $is_attack = ($rc == 2 ? 1 : 0)
+
+   my ($urc, @data) = unauthorised_move_or_attack ({
       id        => $castle_id,
       dt        => get_utc_time (),
       army_id   => $aid,
+      is_attack => $is_attack,
       direction => $direction
    });
 
-   return $data[0] if $rc;
+   return $data[0] if $urc;
+
    return rollback_restore ($rollback, @data) if gpg_create_signature (@data);
    return 0;
 }
@@ -1223,7 +1340,7 @@ sub increase_population {
 
       if (! exists $army->{$name}{1}{tarif}) {
 
-         return "Invalid army $name in castle " . $castle_ref->{id}; 
+         return "Invalid army $name in castle " . $castle_ref->{id};
       }
       $army_tarif += $army->{$name}{1}{tarif};
    }
@@ -1408,9 +1525,9 @@ sub unauthorised_router {
 
       ($code, $errstr) = Decline::unauthorised_buy_army ($data);
    }
-   elsif ($cmd eq 'unauthorised_move_army') {
+   elsif ($cmd eq 'unauthorised_move_or_attack') {
 
-      ($code, $errstr) = Decline::unauthorised_move_army ($data);
+      ($code, $errstr) = Decline::unauthorised_move_or_attack ($data);
    }
    elsif ($cmd eq 'unauthorised_increase_population') {
 
@@ -1690,8 +1807,8 @@ sub prepare_points {
       Decline::set_point_attribute ($p, 'checkdt', Decline::get_utc_time ());
 
       my $r = Mojo::UserAgent->new->max_redirects(0)->connect_timeout(5);
-         $r->request_timeout(10)->inactivity_timeout(10);
-         $r->get ($url . '/keys.json');
+         $r = $r->request_timeout(10)->inactivity_timeout(10);
+         $r = $r->get ($url . '/keys.json');
 
       if ($r->res->code && $r->res->code == 200) {
 
