@@ -19,12 +19,19 @@ use File::Basename qw(basename);
 use Crypt::Digest::SHA1 qw(sha1_hex sha1_file_hex);  # package CryptX
 use Crypt::PK::RSA;                                  # package CryptX
 use Storable qw(dclone);
+use File::Find;
+use File::Spec::Functions qw(catfile);
+use Email::Sender::Simple qw(sendmail);
+use Email::Sender::Transport::SMTP;
+use Email::Simple;
+use Email::Simple::Creator;
 
 our $decline_dir;
 our $VERSION = 1;
 our $max_map_id = 0;
 
 my $geo_index = {};
+my $mail_body = '';
 
 our $army = {
    "pikeman" => {
@@ -1096,13 +1103,81 @@ sub army_battle {
 }
 
 sub update_shadowcopy {
-   my ($key_id, $enemy_castle, @data) = @_;
+   my ($key_id, $enemy_castle, $hashref) = @_;
 
-# TODO unimplemented
-# [ "army", $enemy_army_id, "health",     $second_hp ],
-# [ "army", $enemy_army_id, "expirience", $second_xp ],
+   my $file = catfile (
+      get_decline_dir (),
+      'data',
+      'shadowcopy',
+      $enemy_castle,
+      $key_id . '.json'
+   );
+
+   my $data = {};
+   $data = load_json ($file) if -e $file;
+
+   # TODO correct update
+   $data = $hashref;
+
+   write_file_slurp (get_json ($hashref), $file);
 }
 
+sub do_attack {
+   my ($struct, $enemy_castle_id, $enemy_army_id) = @_;
+
+   my $castle_id = $struct->{id};
+   my $army_id   = $struct->{army_id};
+
+   if (! $enemy_army_id) {
+
+      $enemy_army_id = get_maximum_unit_in_enemy_castle ($enemy_castle_id);
+   }
+
+   if ($enemy_army_id) {
+
+      my ($first_hp, $first_xp, $second_hp, $second_xp)  = army_battle (
+         $castle_id,
+         $army_id,
+         $enemy_castle_id,
+         $enemy_army_id
+      );
+
+      my $iam_attack = is_my_castle (get_key_id (), $enemy_castle_id);
+      my $me_attack  = is_my_castle (get_key_id (), $castle_id      );
+      if (! $iam_attack && ! $me_attack) {
+
+         return (1, "unimplemented import attack"); # TODO
+      }
+      elsif ($iam_attack) {
+
+         update_shadowcopy (
+            get_key_id (),
+            $enemy_castle_id,
+            { 'army' => {
+               $enemy_army_id => {
+                  "health"     => $second_hp,
+                  "expirience" => $second_xp
+               }
+            } }
+         );
+         return (0);
+      }
+      elsif ($me_attack) {
+
+         return (1, "TODO unimplemented me attack"); # TODO
+      }
+      else {
+
+         return (1, "Bad condition in attack target");
+      }
+
+      warn "ATTACK ON $enemy_army_id\n";
+   }
+   else {
+
+      return (1, "Unimplemented obrok"); # TODO
+   }
+}
 
 sub unauthorised_move_or_attack {
    my $struct = shift;
@@ -1143,51 +1218,12 @@ sub unauthorised_move_or_attack {
 
    if ($struct->{is_attack}) {
 
-      if (! $enemy_army_id) {
-
+      my ($rc, $err) = do_attack (
+         $struct,
+         $error_or_enemy_castle_id,
          $enemy_army_id
-            = get_maximum_unit_in_enemy_castle ($error_or_enemy_castle_id);
-      }
-
-      if ($enemy_army_id) {
-
-         my ($first_hp, $first_xp, $second_hp, $second_xp)  = army_battle (
-            $castle_id,
-            $army_id,
-            $error_or_enemy_castle_id,
-            $enemy_army_id
-         );
-
-         my $iam_attack = is_my_castle (get_key_id (), $error_or_enemy_castle_id);
-         my $me_attack  = is_my_castle (get_key_id (), $castle_id               );
-         if (! $iam_attack && ! $me_attack) {
-
-            return (1, "unimplemented import attack"); # TODO
-         }
-         elsif ($iam_attack) {
-
-            update_shadowcopy (
-               get_key_id (),
-               $error_or_enemy_castle_id,
-               [ "army", $enemy_army_id, "health",     $second_hp ],
-               [ "army", $enemy_army_id, "expirience", $second_xp ],
-            );
-         }
-         elsif ($me_attack) {
-
-            return (1, "TODO unimplemented me attack"); # TODO
-         }
-         else {
-
-            return (1, "Bad condition in attack target");
-         }
-
-         warn "ATTACK ON $enemy_army_id\n";
-      }
-      else {
-
-         return (1, "Unimplemented obrok"); # TODO
-      }
+      );
+      return ($rc, $err) if $rc;
    }
    else {
 
@@ -1220,7 +1256,7 @@ sub move_army {
       = has_move_army ($castle_id, $aid, $direction);
    return (1, $error_or_enemy_castle_id) if ! $rc;
 
-   my $is_attack = ($rc == 2 ? 1 : 0)
+   my $is_attack = ($rc == 2 ? 1 : 0);
 
    my ($urc, @data) = unauthorised_move_or_attack ({
       id        => $castle_id,
@@ -1966,6 +2002,64 @@ sub rating {
    ];
 
    return $result;
+}
+
+sub wanted {
+
+   return if ! -f catfile (get_decline_dir (), $File::Find::name);
+
+   if ($File::Find::name =~ /data\W(\d+)\W(\d{4})\W(\d{3})\.(sig|json)$/) {
+
+   }
+   elsif ($File::Find::name =~ /data\W(kingdom.json|points.json|keys.json)$/) {
+
+   }
+   elsif ($File::Find::name =~ /data\W[a-f0-9]{40}.asc$/) {
+
+   }
+   elsif ($File::Find::name =~ /data\W(\d+)\Wstate\.json/) {
+
+   }
+   else {
+
+      # print "unknown: $File::Find::name\n";
+      return;
+   }
+   $mail_body .= ">>>$File::Find::name\n";
+   $mail_body .= read_file_slurp (
+      catfile (get_decline_dir (), $File::Find::name)
+   ) . "\n";
+}
+
+sub on_change {
+
+   $mail_body = '';
+
+   find (\&wanted, "data");
+
+# TODO list of emails
+#  foreach my $destination_email (@list) {
+#
+#     my $transport = Email::Sender::Transport::SMTP->new (
+#        host          => $smtpserver,
+#        ssl           => 1,
+#        sasl_username => $smtpuser,
+#        sasl_password => $smtppassword,
+#        debug         => 0,
+#     );
+#
+#     my $email = Email::Simple->create (
+#        header => [
+#           To      => TODO,
+#           From    => TODO,
+#           Subject => 'Hi!',
+#        ],
+#        body => $mail_body,
+#     );
+#
+#     sendmail ($email, {transport => $transport});
+#  }
+   $mail_body = '';
 }
 
 1;
